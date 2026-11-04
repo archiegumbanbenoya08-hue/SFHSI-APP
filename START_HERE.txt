@@ -1,0 +1,105 @@
+╔════════════════════════════════════════════════════════════════╗
+║              🎓 SCMCIES - QUICK START GUIDE 🎓                 ║
+║     One-Click Link to Access Your Flutter Application          ║
+╚════════════════════════════════════════════════════════════════╝
+
+YOUR APPLICATION LINK:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    🔗 http://172.21.244.38:8000/
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚡ SETUP (One Time Only - Takes 5 Minutes)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STEP 1: Build Your App for Web
+   📂 Double-click: build_flutter_web.bat
+   
+   OR run in terminal:
+   cd "c:\Users\Admin\Desktop\SCMCIES APP"
+   flutter build web --release
+
+   ⏱️  Wait 2-5 minutes for build to complete
+   ✅ You'll see: "✅ Build completed successfully!"
+
+STEP 2: Start Backend Server
+   📂 Double-click: backend/run.bat
+   
+   ✅ You'll see: "🎉 Starting FastAPI Server..."
+           "📍 Network Access URL: http://172.21.244.38:8000"
+
+✅ DONE! Now click your link!
+
+
+🚀 EVERY TIME YOU WANT TO USE THE APP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STEP 1: Make Sure Backend is Running
+   📂 Double-click: backend/run.bat
+
+STEP 2: Open Your Browser
+   🌐 Visit: http://172.21.244.38:8000/
+
+STEP 3: That's It!
+   ✨ Your Flutter app loads instantly!
+   🔓 Login with your credentials
+   🎯 Use all features!
+
+
+👥 TEST ACCOUNTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ADMIN:
+   Email:    admin@scmcies.com
+   Password: your_configured_admin_password
+
+PARENT:
+   Email:    parent1@example.com
+   Password: your_configured_parent_password
+
+
+📱 SHARE WITH OTHERS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Just share this link with admin and parents:
+
+   http://172.21.244.38:8000/
+
+No installation needed! Works on:
+   ✅ Windows PC
+   ✅ Mac
+   ✅ Tablet
+   ✅ Phone
+   ✅ Any device on your network
+
+
+❓ QUICK TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"Cannot reach server"?
+   → Make sure backend/run.bat is running
+   → Look for: "🎉 Starting FastAPI Server..."
+
+App doesn't load?
+   → Close browser and try again (Ctrl+F5)
+   → Check build completed: build_flutter_web.bat
+
+Can't access from other device?
+   → Make sure devices are on SAME WiFi
+   → Try: http://localhost:8000/ (from same computer)
+
+
+📚 MORE INFO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📖 Full Guide:        ONE_CLICK_ACCESS_GUIDE.md
+📞 API Documentation: http://172.21.244.38:8000/docs
+🏥 Health Check:      http://172.21.244.38:8000/health
+
+
+═════════════════════════════════════════════════════════════════
+                    Ready to Start? 🚀
+        Just follow the 2 setup steps above once!
+         Then click: http://172.21.244.38:8000/
+═════════════════════════════════════════════════════════════════

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/app_connection_service.dart';
-import '../services/face_recognition_service.dart';
+import '../services/backend_api_service.dart';
 import '../services/message_service.dart';
 import '../services/parent_account_service.dart';
 
@@ -56,40 +56,22 @@ class AdminStudent {
     required this.lastSeen,
   });
 
-  AdminStudent copyWith({String? status, String? lastSeen}) {
+  factory AdminStudent.fromJson(Map<String, dynamic> json) {
+    final databaseStatus = '${json['status'] ?? ''}';
     return AdminStudent(
-      id: id,
-      name: name,
-      section: section,
-      grade: grade,
-      parent: parent,
-      parentEmail: parentEmail,
-      status: status ?? this.status,
-      imageUrl: imageUrl,
-      lastSeen: lastSeen ?? this.lastSeen,
-    );
-  }
-
-  factory AdminStudent.fromFaceEvent(FaceEvent event) {
-    final initials = event.studentName
-        .split(' ')
-        .where((part) => part.isNotEmpty)
-        .map((part) => part[0])
-        .take(2)
-        .join();
-
-    return AdminStudent(
-      id: event.studentId,
-      name: event.studentName,
-      section: 'N/A',
-      grade: event.grade,
-      parent: 'Unknown',
-      parentEmail: event.parentEmails.isNotEmpty
-          ? event.parentEmails.first
-          : '',
-      status: event.status,
-      imageUrl: 'https://via.placeholder.com/50?text=$initials',
-      lastSeen: event.timestamp.toIso8601String(),
+      id: '${json['student_id'] ?? json['id'] ?? ''}',
+      name: '${json['first_name'] ?? ''} ${json['last_name'] ?? ''}'.trim(),
+      section: '${json['section'] ?? 'N/A'}',
+      grade: '${json['grade_level'] ?? 'N/A'}',
+      parent: '${json['parent_name'] ?? 'Parent'}',
+      parentEmail: '${json['parent_email'] ?? ''}',
+      status: databaseStatus == 'IN_CAMPUS'
+          ? 'Inside Campus'
+          : databaseStatus == 'NOT_IN_CAMPUS'
+          ? 'Outside Campus'
+          : databaseStatus,
+      imageUrl: '',
+      lastSeen: '${json['last_seen'] ?? ''}',
     );
   }
 }
@@ -109,9 +91,10 @@ class _AdminPageState extends State<AdminPage> {
   LogStatus _selectedLogStatus = LogStatus.all;
 
   String _adminName = 'Administrator';
-  String _adminEmail = ParentAccountService.adminEmail;
+  String _adminEmail = '';
   String _selectedSection = 'students';
-  String _selectedParentEmail = ParentAccountService.defaultParentEmails.first;
+  String _selectedParentEmail = '';
+  List<String> _parentEmails = [];
   bool _parentsCollapsed = false;
   final TextEditingController _adminMessageController = TextEditingController();
 
@@ -120,31 +103,13 @@ class _AdminPageState extends State<AdminPage> {
   @override
   void initState() {
     super.initState();
-    FaceRecognitionService.instance.register(_onFaceEvent);
     _loadAdminSettings();
   }
 
   @override
   void dispose() {
-    FaceRecognitionService.instance.unregister(_onFaceEvent);
+    _adminMessageController.dispose();
     super.dispose();
-  }
-
-  void _onFaceEvent(FaceEvent event) {
-    final index = _students.indexWhere(
-      (student) => student.id == event.studentId,
-    );
-
-    setState(() {
-      if (index != -1) {
-        _students[index] = _students[index].copyWith(
-          status: event.status,
-          lastSeen: event.timestamp.toIso8601String(),
-        );
-      } else {
-        _students.add(AdminStudent.fromFaceEvent(event));
-      }
-    });
   }
 
   List<AdminStudent> get _filteredStudents {
@@ -173,16 +138,34 @@ class _AdminPageState extends State<AdminPage> {
       _students.where((student) => student.status == 'Outside Campus').length;
 
   Future<void> _loadAdminSettings() async {
-    final service = ParentAccountService();
-    final savedEmail = await service.getAdminEmail();
-    final savedName = await service.getParentName(savedEmail);
+    try {
+      final api = BackendApiService.instance;
+      final profile = await api.getProfile();
+      final parents = await api.getParents();
+      final students = await api.getStudents();
+      if (!mounted) return;
 
-    if (!mounted) return;
-
-    setState(() {
-      _adminEmail = savedEmail;
-      _adminName = savedName ?? 'Administrator';
-    });
+      setState(() {
+        _adminEmail = profile.email;
+        _adminName = profile.name;
+        _parentEmails = parents
+            .map((parent) => '${parent['email'] ?? ''}')
+            .where((email) => email.isNotEmpty)
+            .toList();
+        if (!_parentEmails.contains(_selectedParentEmail)) {
+          _selectedParentEmail = _parentEmails.isEmpty ? '' : _parentEmails.first;
+        }
+        _students
+          ..clear()
+          ..addAll(students.map(AdminStudent.fromJson));
+      });
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load database records: $error')),
+        );
+      }
+    }
   }
 
   Future<void> _promptAdminChangeName() async {
@@ -210,7 +193,15 @@ class _AdminPageState extends State<AdminPage> {
 
     if (result == null || result.isEmpty) return;
 
-    await ParentAccountService().saveParentName(_adminEmail, result);
+    try {
+      await ParentAccountService().saveParentName(_adminEmail, result);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update name: $error')),
+      );
+      return;
+    }
     if (!mounted) return;
 
     setState(() {
@@ -250,11 +241,19 @@ class _AdminPageState extends State<AdminPage> {
     final newEmail = result?.trim();
     if (newEmail == null || newEmail.isEmpty || newEmail == _adminEmail) return;
 
-    await ParentAccountService().changeEmail(
-      _adminEmail,
-      newEmail,
-      isAdmin: true,
-    );
+    try {
+      await ParentAccountService().changeEmail(
+        _adminEmail,
+        newEmail,
+        isAdmin: true,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update email: $error')),
+      );
+      return;
+    }
     if (!mounted) return;
 
     setState(() {
@@ -465,8 +464,10 @@ class _AdminPageState extends State<AdminPage> {
                     ],
                   ),
                 );
-                if (should == true && mounted)
+                if (should == true && mounted) {
+                  ParentAccountService().logout();
                   Navigator.pushReplacementNamed(context, '/welcome');
+                }
               },
             ),
           ],
@@ -587,7 +588,15 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   Widget _buildAdminMessageSection() {
-    final parentEmails = ParentAccountService.defaultParentEmails;
+    final parentEmails = _parentEmails;
+    if (parentEmails.isEmpty) {
+      return const Center(
+        child: Text(
+          'No parent accounts found in the database.',
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
     return Container(
       color: const Color(0xFF2A120A),
       child: Row(
@@ -785,6 +794,14 @@ class _AdminPageState extends State<AdminPage> {
                 _selectedParentEmail,
               ),
               builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Text(
+                      'Could not load messages: ${snapshot.error}',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  );
+                }
                 final messages = snapshot.data ?? const <ChatMessage>[];
                 final displayName = _selectedParentEmail.split('@').first;
 
@@ -965,14 +982,23 @@ class _AdminPageState extends State<AdminPage> {
                                 return;
                               }
 
-                              await MessageService().saveMessage(
-                                sender: _adminEmail,
-                                receiver: _selectedParentEmail,
-                                text: text,
-                                isAdmin: true,
-                              );
-                              _adminMessageController.clear();
-                              if (mounted) setState(() {});
+                              try {
+                                await MessageService().saveMessage(
+                                  sender: _adminEmail,
+                                  receiver: _selectedParentEmail,
+                                  text: text,
+                                  isAdmin: true,
+                                );
+                                _adminMessageController.clear();
+                                if (mounted) setState(() {});
+                              } catch (error) {
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Could not send message: $error'),
+                                  ),
+                                );
+                              }
                             },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFFE7B77A),
@@ -1515,6 +1541,7 @@ class _AdminPageState extends State<AdminPage> {
         if (didPop) return;
         final shouldLogout = await _confirmLogoutOnBack();
         if (shouldLogout && mounted) {
+          ParentAccountService().logout();
           Navigator.pushReplacementNamed(context, '/welcome');
         }
       },
@@ -1728,7 +1755,7 @@ class _AdminPageState extends State<AdminPage> {
             Icon(Icons.info_outline, size: 36, color: Color(0xFFE7B77A)),
             SizedBox(height: 8),
             Text(
-              'No students available — waiting for face-recognition events',
+              'No students are registered in the database yet.',
               style: TextStyle(color: Colors.white),
             ),
           ],
@@ -1948,8 +1975,9 @@ class _AdminPageState extends State<AdminPage> {
               children: [
                 CircleAvatar(
                   radius: 16,
-                  backgroundImage: NetworkImage(student.imageUrl),
-                  onBackgroundImageError: (exception, stackTrace) {},
+                  backgroundImage: student.imageUrl.isEmpty
+                      ? null
+                      : NetworkImage(student.imageUrl),
                   child: Text(student.name.isNotEmpty ? student.name[0] : '?'),
                 ),
                 const SizedBox(width: 8),
@@ -2066,6 +2094,7 @@ class _AdminPageState extends State<AdminPage> {
     () async {
       final should = await _confirmLogoutOnBack();
       if (should && mounted) {
+        ParentAccountService().logout();
         Navigator.pushReplacementNamed(context, '/welcome');
       }
     }();

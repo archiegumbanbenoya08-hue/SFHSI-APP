@@ -1,5 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'backend_api_service.dart';
+
 class ParentAccountService {
   static final ParentAccountService _instance =
       ParentAccountService._internal();
@@ -11,20 +13,23 @@ class ParentAccountService {
   ParentAccountService._internal();
 
   static const int minimumPasswordLength = 8;
-  static const String adminEmail = 'admin@sfhsi.com';
-  static const String adminEmailKey = 'admin_current_email';
   static const String lastLoggedInEmailKey = 'last_logged_in_email';
-  static final List<String> defaultParentEmails = List.generate(
-    21,
-    (index) => index == 0
-        ? 'parent@sfhsi.com'
-        : 'parent${index.toString().padLeft(2, '0')}@sfhsi.com',
-    growable: false,
-  );
 
   Future<SharedPreferences> get _prefs async => SharedPreferences.getInstance();
 
   String _normalizeEmail(String email) => email.trim().toLowerCase();
+
+  Future<BackendUser> signIn(String email, String password) async {
+    final user = await BackendApiService.instance.login(email, password);
+    final prefs = await _prefs;
+    for (final key in prefs.getKeys().where((key) => key.startsWith('password_'))) {
+      await prefs.remove(key);
+    }
+    await setLastLoggedInEmail(user.email);
+    return user;
+  }
+
+  void logout() => BackendApiService.instance.logout();
 
   bool validatePassword(String password) {
     final trimmedPassword = password.trim();
@@ -33,19 +38,11 @@ class ParentAccountService {
   }
 
   Future<String> getAdminEmail() async {
-    final prefs = await _prefs;
-    return prefs.getString(adminEmailKey) ?? adminEmail;
-  }
-
-  Future<void> _setAdminEmail(String email) async {
-    final prefs = await _prefs;
-    await prefs.setString(adminEmailKey, email);
-  }
-
-  Future<String?> getPassword(String email) async {
-    final prefs = await _prefs;
-    final key = 'password_${_normalizeEmail(email)}';
-    return prefs.getString(key);
+    final user = await BackendApiService.instance.getProfile();
+    if (user.role != 'admin') {
+      throw const BackendApiException('Administrator account required.');
+    }
+    return user.email;
   }
 
   Future<String?> getProfileImagePath(String email) async {
@@ -70,38 +67,9 @@ class ParentAccountService {
   }
 
   Future<String?> getParentName(String email) async {
-    final prefs = await _prefs;
-    final normalizedEmail = _normalizeEmail(email);
-    final key = 'name_$normalizedEmail';
-    final savedName = prefs.getString(key) ?? prefs.getString('name_$email');
-    if (savedName != null && savedName.isNotEmpty) {
-      return savedName;
-    }
-
-    final currentAdminEmail = await getAdminEmail();
-    if (normalizedEmail == _normalizeEmail(currentAdminEmail) ||
-        normalizedEmail == _normalizeEmail(adminEmail)) {
-      return 'Administrator';
-    }
-
-    return _deriveNameFromEmail(normalizedEmail);
-  }
-
-  Future<bool> verifyCredentials(String email, String password) async {
-    try {
-      final normalizedEmail = _normalizeEmail(email);
-      final savedPassword = await getPassword(normalizedEmail);
-      return savedPassword != null && savedPassword == password.trim();
-    } catch (_) {
-      return false;
-    }
-  }
-
-  Future<void> savePassword(String email, String newPassword) async {
-    final prefs = await _prefs;
-    final normalizedEmail = _normalizeEmail(email);
-    final key = 'password_$normalizedEmail';
-    await prefs.setString(key, newPassword.trim());
+    final user = await BackendApiService.instance.getProfile();
+    if (_normalizeEmail(user.email) != _normalizeEmail(email)) return null;
+    return user.name;
   }
 
   Future<bool> changePassword(
@@ -113,17 +81,24 @@ class ParentAccountService {
     final trimmedNewPassword = newPassword.trim();
     if (trimmedEmail.isEmpty || trimmedNewPassword.isEmpty) return false;
     if (!validatePassword(trimmedNewPassword)) return false;
-    if (!await verifyCredentials(trimmedEmail, currentPassword)) return false;
-
-    await savePassword(trimmedEmail, trimmedNewPassword);
-    return true;
+    try {
+      await BackendApiService.instance.changePassword(
+        currentPassword: currentPassword,
+        newPassword: trimmedNewPassword,
+      );
+      return true;
+    } on BackendApiException catch (error) {
+      if (error.statusCode == 401) return false;
+      rethrow;
+    }
   }
 
   Future<void> saveParentName(String email, String newName) async {
-    final prefs = await _prefs;
-    final normalizedEmail = _normalizeEmail(email);
-    final key = 'name_$normalizedEmail';
-    await prefs.setString(key, newName.trim());
+    final user = await BackendApiService.instance.getProfile();
+    if (_normalizeEmail(user.email) != _normalizeEmail(email)) {
+      throw const BackendApiException('You can only update your own account.');
+    }
+    await BackendApiService.instance.updateProfile(name: newName, email: user.email);
   }
 
   Future<void> saveProfileImagePath(String email, String imagePath) async {
@@ -138,35 +113,15 @@ class ParentAccountService {
     String newEmail, {
     required bool isAdmin,
   }) async {
-    final prefs = await _prefs;
-    final normalizedOldEmail = _normalizeEmail(oldEmail);
-    final normalizedNewEmail = _normalizeEmail(newEmail);
-
-    final stringFields = ['password', 'name', 'profile_image'];
-    for (final field in stringFields) {
-      final oldKey = '${field}_$normalizedOldEmail';
-      final altOldKey = '${field}_$oldEmail';
-      final value = prefs.getString(oldKey) ?? prefs.getString(altOldKey);
-      if (value != null) {
-        await prefs.setString('${field}_$normalizedNewEmail', value);
-      }
-      await prefs.remove(oldKey);
-      await prefs.remove(altOldKey);
+    final user = await BackendApiService.instance.getProfile();
+    if (_normalizeEmail(user.email) != _normalizeEmail(oldEmail) ||
+        (user.role == 'admin') != isAdmin) {
+      throw const BackendApiException('You can only update your own account.');
     }
-
-    await setLastLoggedInEmail(normalizedNewEmail);
-
-    if (isAdmin) {
-      await _setAdminEmail(normalizedNewEmail);
-    }
-  }
-
-  String _deriveNameFromEmail(String email) {
-    final local = email.split('@').first;
-    final parts = local.split(RegExp(r'[._]'));
-    return parts
-        .where((part) => part.isNotEmpty)
-        .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
-        .join(' ');
+    final updated = await BackendApiService.instance.updateProfile(
+      name: user.name,
+      email: newEmail,
+    );
+    await setLastLoggedInEmail(updated.email);
   }
 }

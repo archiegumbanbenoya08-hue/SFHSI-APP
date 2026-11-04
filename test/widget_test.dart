@@ -21,22 +21,11 @@ void main() {
     expect(find.text('Welcome to SFHSI System'), findsOneWidget);
   });
 
-  testWidgets('Parent page shows a no-student state by default', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: ParentPage(email: 'parent@example.com')),
-    );
-
-    expect(find.text('No student activity yet'), findsOneWidget);
-  });
-
   testWidgets('Parent page exposes a notification launcher', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: ParentPage(email: 'parent@example.com')),
-    );
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(const MaterialApp(home: ParentPage()));
 
     expect(find.byTooltip('Notifications'), findsOneWidget);
 
@@ -46,105 +35,25 @@ void main() {
     expect(find.text('Notifications'), findsWidgets);
   });
 
-  test('Password change requires the current password', () async {
+  test('Last email and profile image path remain local preferences', () async {
     SharedPreferences.setMockInitialValues({});
     final service = ParentAccountService();
 
-    await service.savePassword('parent@example.com', 'oldpass');
-
-    final changed = await service.changePassword(
-      'parent@example.com',
-      currentPassword: 'wrong-pass',
-      newPassword: 'newpass123',
-    );
-
-    expect(changed, isFalse);
-    expect(await service.getPassword('parent@example.com'), 'oldpass');
-  });
-
-  test('Password change rejects weak passwords', () async {
-    SharedPreferences.setMockInitialValues({});
-    final service = ParentAccountService();
-
-    await service.savePassword('parent@example.com', 'oldpass');
-
-    final changed = await service.changePassword(
-      'parent@example.com',
-      currentPassword: 'oldpass',
-      newPassword: '123',
-    );
-
-    expect(changed, isFalse);
-    expect(await service.getPassword('parent@example.com'), 'oldpass');
-  });
-
-  test('Parent email list contains the 20 parent accounts', () async {
-    expect(ParentAccountService.defaultParentEmails.length, 21);
-    expect(
-      ParentAccountService.defaultParentEmails,
-      contains('parent01@sfhsi.com'),
-    );
-    expect(
-      ParentAccountService.defaultParentEmails,
-      contains('parent20@sfhsi.com'),
-    );
-    expect(
-      ParentAccountService.defaultParentEmails,
-      contains('parent@sfhsi.com'),
-    );
-  });
-
-  test('Default admin and parent credentials are not accepted', () async {
-    SharedPreferences.setMockInitialValues({});
-    final service = ParentAccountService();
-    expect(
-      await service.verifyCredentials('admin@sfhsi.com', 'not-configured'),
-      isFalse,
-    );
-    expect(
-      await service.verifyCredentials('parent@sfhsi.com', 'not-configured'),
-      isFalse,
-    );
-  });
-
-  test('Updated account details persist across app restarts', () async {
-    SharedPreferences.setMockInitialValues({});
-    final service = ParentAccountService();
-
-    await service.savePassword('parent@example.com', 'OldPass@123');
-    await service.saveParentName('parent@example.com', 'Old Name');
-    await service.saveProfileImagePath(
-      'parent@example.com',
-      '/tmp/old_profile.png',
-    );
     await service.setLastLoggedInEmail('parent@example.com');
-
-    await service.changeEmail(
-      'parent@example.com',
-      'newparent@example.com',
-      isAdmin: false,
-    );
-    await service.saveParentName('newparent@example.com', 'New Parent Name');
-    await service.savePassword('newparent@example.com', 'NewPass@456');
     await service.saveProfileImagePath(
-      'newparent@example.com',
-      '/tmp/new_profile.png',
+      'parent@example.com',
+      'profile.png',
     );
 
-    expect(await service.getPassword('newparent@example.com'), 'NewPass@456');
-    expect(
-      await service.getParentName('newparent@example.com'),
-      'New Parent Name',
-    );
-    expect(
-      await service.getProfileImagePath('newparent@example.com'),
-      '/tmp/new_profile.png',
-    );
-    expect(await service.getLastLoggedInEmail(), 'newparent@example.com');
-    expect(
-      await service.verifyCredentials('newparent@example.com', 'NewPass@456'),
-      isTrue,
-    );
+    expect(await service.getProfileImagePath('parent@example.com'), 'profile.png');
+    expect(await service.getLastLoggedInEmail(), 'parent@example.com');
+  });
+
+  test('Password validation enforces minimum length and no whitespace', () {
+    final service = ParentAccountService();
+    expect(service.validatePassword('validpass123'), isTrue);
+    expect(service.validatePassword('short'), isFalse);
+    expect(service.validatePassword('has space 123'), isFalse);
   });
 
   test(

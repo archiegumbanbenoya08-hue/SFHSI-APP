@@ -8,6 +8,7 @@ import sharp from 'sharp';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import { generateFaceEncoding } from '../services/faceEncoding.js';
+import { recordActivity } from '../services/activityLog.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -71,6 +72,9 @@ router.get('/', authenticateAdminToken, async (req, res) => {
 
 // Register new student with photo (Admin only)
 router.post('/', authenticateAdminToken, upload.single('photo'), async (req, res) => {
+  let conn;
+  let transactionStarted = false;
+  let filepath;
   try {
     const { student_id, first_name, last_name, grade_level, section, parent_id } = req.body;
 
@@ -78,12 +82,15 @@ router.post('/', authenticateAdminToken, upload.single('photo'), async (req, res
       return res.status(400).json({ error: 'All fields including photo are required' });
     }
 
-    const conn = await getConnection();
+    conn = await getConnection();
+    await conn.beginTransaction();
+    transactionStarted = true;
 
     // Verify parent exists and get email
-    const [parentRows] = await conn.query('SELECT email FROM parent WHERE id = ?', [parent_id]);
+    const [parentRows] = await conn.query('SELECT id, email FROM parent WHERE id = ?', [parent_id]);
     if (parentRows.length === 0) {
-      conn.release();
+      await conn.rollback();
+      transactionStarted = false;
       return res.status(400).json({ error: 'Invalid parent ID' });
     }
 
@@ -91,7 +98,7 @@ router.post('/', authenticateAdminToken, upload.single('photo'), async (req, res
 
     // Save photo
     const filename = `${uuidv4()}.jpg`;
-    const filepath = join(uploadDir, filename);
+    filepath = join(uploadDir, filename);
     await sharp(req.file.buffer).resize(300, 300).toFile(filepath);
     const imagePath = `/uploads/${filename}`;
 
@@ -113,7 +120,18 @@ router.post('/', authenticateAdminToken, upload.single('photo'), async (req, res
       [student_id, first_name, last_name, grade_level, section, parent_id, parentEmail, imagePath, faceEncoding]
     );
 
-    conn.release();
+    await recordActivity(conn, {
+      actorRole: 'admin',
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'student.created',
+      entityType: 'student',
+      entityId: result.insertId,
+      parentId: parentRows[0].id,
+      details: { student_id },
+    });
+    await conn.commit();
+    transactionStarted = false;
 
     res.status(201).json({
       id: result.insertId,
@@ -129,18 +147,48 @@ router.post('/', authenticateAdminToken, upload.single('photo'), async (req, res
       message: 'Student registered successfully'
     });
   } catch (err) {
+    if (conn && transactionStarted) {
+      try {
+        await conn.rollback();
+      } catch (rollbackError) {
+        console.error('Failed to roll back student creation:', rollbackError);
+      }
+    }
+    if (filepath && fs.existsSync(filepath)) {
+      try {
+        fs.unlinkSync(filepath);
+      } catch (cleanupError) {
+        console.error('Failed to remove student image after rollback:', cleanupError);
+      }
+    }
     console.error(err);
     res.status(500).json({ error: 'Failed to register student' });
+  } finally {
+    conn?.release();
   }
 });
 
 // Update student (Admin only)
 router.put('/:id', authenticateAdminToken, async (req, res) => {
+  let conn;
+  let transactionStarted = false;
   try {
     const studentId = req.params.id;
     const { first_name, last_name, grade_level, section } = req.body;
 
-    const conn = await getConnection();
+    conn = await getConnection();
+    await conn.beginTransaction();
+    transactionStarted = true;
+
+    const [students] = await conn.query(
+      'SELECT student_id, parent_id FROM student WHERE id = ?',
+      [studentId],
+    );
+    if (students.length === 0) {
+      await conn.rollback();
+      transactionStarted = false;
+      return res.status(404).json({ error: 'Student not found' });
+    }
 
     const updateFields = [];
     const updateValues = [];
@@ -163,7 +211,8 @@ router.put('/:id', authenticateAdminToken, async (req, res) => {
     }
 
     if (updateFields.length === 0) {
-      conn.release();
+      await conn.rollback();
+      transactionStarted = false;
       return res.status(400).json({ error: 'No fields to update' });
     }
 
@@ -171,40 +220,98 @@ router.put('/:id', authenticateAdminToken, async (req, res) => {
     const query = `UPDATE student SET ${updateFields.join(', ')} WHERE id = ?`;
 
     await conn.query(query, updateValues);
-    conn.release();
+    await recordActivity(conn, {
+      actorRole: 'admin',
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'student.updated',
+      entityType: 'student',
+      entityId: studentId,
+      parentId: students[0].parent_id,
+      details: {
+        student_id: students[0].student_id,
+        changed_fields: updateFields.map((field) => field.split(' ')[0]),
+      },
+    });
+    await conn.commit();
+    transactionStarted = false;
 
     res.json({ message: 'Student updated successfully' });
   } catch (err) {
+    if (conn && transactionStarted) {
+      try {
+        await conn.rollback();
+      } catch (rollbackError) {
+        console.error('Failed to roll back student update:', rollbackError);
+      }
+    }
     console.error(err);
     res.status(500).json({ error: 'Failed to update student' });
+  } finally {
+    conn?.release();
   }
 });
 
 // Delete student (Admin only)
 router.delete('/:id', authenticateAdminToken, async (req, res) => {
+  let conn;
+  let transactionStarted = false;
+  let imagePath;
   try {
     const studentId = req.params.id;
 
-    const conn = await getConnection();
-    
-    // Get image path to delete file
-    const [students] = await conn.query('SELECT image_path FROM student WHERE id = ?', [studentId]);
-    
-    if (students.length > 0 && students[0].image_path) {
-      const filepath = join(__dirname, '..', students[0].image_path);
+    conn = await getConnection();
+    await conn.beginTransaction();
+    transactionStarted = true;
+    const [students] = await conn.query(
+      'SELECT student_id, parent_id, image_path FROM student WHERE id = ?',
+      [studentId],
+    );
+    if (students.length === 0) {
+      await conn.rollback();
+      transactionStarted = false;
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    imagePath = students[0].image_path;
+    await conn.query('DELETE FROM student WHERE id = ?', [studentId]);
+    await recordActivity(conn, {
+      actorRole: 'admin',
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      action: 'student.deleted',
+      entityType: 'student',
+      entityId: studentId,
+      parentId: students[0].parent_id,
+      details: { student_id: students[0].student_id },
+    });
+    await conn.commit();
+    transactionStarted = false;
+
+    if (imagePath) {
+      const filepath = join(__dirname, '..', imagePath);
       if (fs.existsSync(filepath)) {
-        fs.unlinkSync(filepath);
+        try {
+          fs.unlinkSync(filepath);
+        } catch (cleanupError) {
+          console.error('Failed to remove student image after database deletion:', cleanupError);
+        }
       }
     }
 
-    // Delete student (cascades to logs)
-    await conn.query('DELETE FROM student WHERE id = ?', [studentId]);
-    conn.release();
-
     res.json({ message: 'Student deleted successfully' });
   } catch (err) {
+    if (conn && transactionStarted) {
+      try {
+        await conn.rollback();
+      } catch (rollbackError) {
+        console.error('Failed to roll back student deletion:', rollbackError);
+      }
+    }
     console.error(err);
     res.status(500).json({ error: 'Failed to delete student' });
+  } finally {
+    conn?.release();
   }
 });
 

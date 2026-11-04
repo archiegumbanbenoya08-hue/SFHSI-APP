@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/backend_api_service.dart';
 import '../services/face_recognition_service.dart';
 import '../services/parent_account_service.dart';
 
@@ -27,7 +28,7 @@ class _DrawerItemData {
 class _ParentPageState extends State<ParentPage> {
   // Parent account shown here (default changed as requested)
   String _parentName = 'Parent';
-  String _parentEmail = 'archiegumbanbenoya08@gmail.com';
+  String _parentEmail = '';
 
   // Password-change controllers
   final TextEditingController _currentPasswordController = TextEditingController();
@@ -36,53 +37,71 @@ class _ParentPageState extends State<ParentPage> {
 
   bool _adminNotificationsEnabled = true;
   String _selectedSection = 'students';
+  bool _settingsLoadStarted = false;
+  bool _isLoadingChildren = false;
+  List<Map<String, dynamic>> _children = [];
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (_settingsLoadStarted) return;
+    _settingsLoadStarted = true;
     if (widget.email != null && widget.email!.isNotEmpty) {
       _parentEmail = widget.email!;
       _loadParentSettings(_parentEmail);
       return;
     }
 
-    _loadLastLoggedInParent();
-  }
-
-  // Load persisted parent name from storage
-  Future<void> _loadParentName(String email) async {
-    final savedName = await ParentAccountService().getParentName(email);
-    if (savedName != null && savedName.isNotEmpty) {
-      if (mounted) {
-        setState(() {
-          _parentName = savedName;
-        });
-      }
-    } else {
-      // If no saved name, derive from email
-      if (mounted) {
-        setState(() {
-          _parentName = _deriveNameFromEmail(email);
-        });
-      }
+    final user = BackendApiService.instance.currentUser;
+    if (user != null && user.role == 'parent') {
+      _parentEmail = user.email;
+      _loadParentSettings(_parentEmail);
     }
   }
 
-  Future<void> _loadLastLoggedInParent() async {
-    final email = await ParentAccountService().getLastLoggedInEmail();
-    if (email.isEmpty) return;
-    if (!mounted) return;
-    setState(() {
-      _parentEmail = email;
-    });
-    await _loadParentSettings(email);
+  Future<void> _loadParentName(String email) async {
+    try {
+      final savedName = await ParentAccountService().getParentName(email);
+      if (savedName != null && savedName.isNotEmpty && mounted) {
+        setState(() => _parentName = savedName);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load parent profile: $error')),
+      );
+    }
   }
 
   Future<void> _loadParentSettings(String email) async {
     await Future.wait([
       _loadParentName(email),
       _loadNotificationPreferences(),
+      _loadParentChildren(),
     ]);
+  }
+
+  Future<void> _loadParentChildren() async {
+    final user = BackendApiService.instance.currentUser;
+    if (user == null || user.role != 'parent') {
+      if (mounted) setState(() => _isLoadingChildren = false);
+      return;
+    }
+    if (mounted) setState(() => _isLoadingChildren = true);
+    try {
+      final children = await BackendApiService.instance.getChildren(user.id);
+      if (!mounted) return;
+      setState(() {
+        _children = children;
+        _isLoadingChildren = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isLoadingChildren = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load student records: $error')),
+      );
+    }
   }
 
   Future<void> _loadNotificationPreferences() async {
@@ -116,7 +135,15 @@ class _ParentPageState extends State<ParentPage> {
     );
 
     if (result != null && result.isNotEmpty) {
-      await ParentAccountService().saveParentName(_parentEmail, result);
+      try {
+        await ParentAccountService().saveParentName(_parentEmail, result);
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update name: $error')),
+        );
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _parentName = result;
@@ -144,7 +171,19 @@ class _ParentPageState extends State<ParentPage> {
     );
     final newEmail = result?.trim();
     if (newEmail != null && newEmail.isNotEmpty && newEmail != _parentEmail) {
-      await ParentAccountService().changeEmail(_parentEmail, newEmail, isAdmin: false);
+      try {
+        await ParentAccountService().changeEmail(
+          _parentEmail,
+          newEmail,
+          isAdmin: false,
+        );
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update email: $error')),
+        );
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _parentEmail = newEmail;
@@ -277,6 +316,7 @@ class _ParentPageState extends State<ParentPage> {
                 Navigator.pop(context);
                 final shouldLogout = await _confirmLogoutOnBack();
                 if (shouldLogout && mounted) {
+                  ParentAccountService().logout();
                   Navigator.pushReplacementNamed(context, '/welcome');
                 }
               },
@@ -384,12 +424,6 @@ class _ParentPageState extends State<ParentPage> {
     return '$hour:$minute $suffix';
   }
 
-  String _deriveNameFromEmail(String email) {
-    final local = email.split('@').first;
-    final parts = local.split(RegExp(r'[._]'));
-    return parts.map((p) => p.isEmpty ? '' : '${p[0].toUpperCase()}${p.substring(1)}').join(' ');
-  }
-
   Future<bool> _confirmLogoutOnBack() async {
     final result = await showDialog<bool>(
       context: context,
@@ -468,79 +502,86 @@ class _ParentPageState extends State<ParentPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_student == null)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFF3D2017),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFB38157), width: 1.2),
-              ),
-              child: const Column(
-                children: [
-                  Icon(Icons.info_outline, size: 36, color: Color(0xFFE7B77A)),
-                  SizedBox(height: 12),
-                  Text('No student activity yet', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                  SizedBox(height: 8),
-                  Text('Student entry or exit updates will appear here as soon as they are recorded.', textAlign: TextAlign.center, style: TextStyle(color: Color(0xFFE8D7C8))),
-                ],
-              ),
+          const Text(
+            'My Students',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (_isLoadingChildren)
+            const Center(child: CircularProgressIndicator())
+          else if (_children.isEmpty)
+            const Text(
+              'No student records are linked to this account.',
+              style: TextStyle(color: Color(0xFFE8D7C8)),
             )
           else
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: const Color(0xFF3D2017),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFB38157), width: 1.2),
-              ),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 30,
-                    backgroundColor: const Color(0xFFB38157),
-                    child: Text(
-                      _student!['name']!.split(' ').map((p) => p[0]).take(2).join(),
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 24),
+            ..._children.map((child) {
+              final name =
+                  '${child['first_name'] ?? ''} ${child['last_name'] ?? ''}'
+                      .trim();
+              final initials = name
+                  .split(' ')
+                  .where((part) => part.isNotEmpty)
+                  .take(2)
+                  .map((part) => part[0].toUpperCase())
+                  .join();
+              return Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF3D2017),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFB38157)),
+                ),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: const Color(0xFFB38157),
+                      child: Text(
+                        initials.isEmpty ? '?' : initials,
+                        style: const TextStyle(color: Colors.white),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(_student!['name']!, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 6),
-                        Text('Grade ${_student!['grade'] ?? 'Grade -'}', style: const TextStyle(color: Color(0xFFE8D7C8), fontSize: 12)),
-                      ],
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name.isEmpty ? 'Student' : name,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${child['grade_level'] ?? 'Grade not set'}'
+                            ' • ${child['section'] ?? 'Section not set'}',
+                            style: const TextStyle(
+                              color: Color(0xFFE8D7C8),
+                            ),
+                          ),
+                          Text(
+                            'Student ID: ${child['student_id'] ?? 'N/A'}',
+                            style: const TextStyle(
+                              color: Color(0xFFE8D7C8),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.green.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.greenAccent.shade400, width: 1),
-                    ),
-                    child: Text(_student!['status'] == 'Inside Campus' ? 'On Campus' : 'Off Campus', style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 12)),
-                  ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 16),
-          if (_student != null) ...[
-            Row(
-              children: [
-                Expanded(child: _buildActivityCard(icon: Icons.login, title: 'Last Entry', time: _lastEntryTime, subtitle: 'Main Gate', borderColor: const Color(0xFFCC8D4A))),
-                const SizedBox(width: 12),
-                Expanded(child: _buildActivityCard(icon: Icons.logout, title: 'Last Exit', time: _lastExitTime, subtitle: 'Main Gate', borderColor: const Color(0xFFCC8D4A))),
-              ],
-            ),
-            const SizedBox(height: 16),
-            _buildActivityTimeline(),
-          ],
+                  ],
+                ),
+              );
+            }),
         ],
       ),
     );
@@ -783,6 +824,7 @@ class _ParentPageState extends State<ParentPage> {
         if (didPop) return;
         final shouldLogout = await _confirmLogoutOnBack();
         if (shouldLogout && mounted) {
+          ParentAccountService().logout();
           Navigator.pushReplacementNamed(context, '/welcome');
         }
       },
@@ -1069,4 +1111,3 @@ class _ParentPageState extends State<ParentPage> {
   }
 
 }
-

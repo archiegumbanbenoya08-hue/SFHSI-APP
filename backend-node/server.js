@@ -34,12 +34,14 @@ app.use('/uploads', express.static(join(__dirname, 'uploads')));
 import authRoutes from './routes/auth.js';
 import studentRoutes from './routes/students.js';
 import logRoutes from './routes/logs.js';
+import activityRoutes from './routes/activity.js';
 import parentRoutes from './routes/parents.js';
 import adminRoutes from './routes/admin.js';
 
 app.use('/api/auth', authRoutes);
 app.use('/api/students', studentRoutes);
 app.use('/api/logs', logRoutes);
+app.use('/api/activity', activityRoutes);
 app.use('/api/parents', parentRoutes);
 app.use('/api/admin', adminRoutes);
 

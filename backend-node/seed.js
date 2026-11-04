@@ -1,5 +1,6 @@
 import { getConnection } from './db.js';
 import { hashPassword } from './middleware/auth.js';
+import { recordActivity } from './services/activityLog.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -16,6 +17,7 @@ async function seedDatabase() {
   }
 
   let conn;
+  let transactionStarted = false;
   try {
     conn = await getConnection();
 
@@ -24,14 +26,24 @@ async function seedDatabase() {
 
     if (admins.length > 0) {
       console.log('Admin already exists');
-      conn.release();
       return;
     }
 
-    // Create first admin
+    await conn.beginTransaction();
+    transactionStarted = true;
+
     const hashedPassword = await hashPassword(adminPassword);
 
-    await conn.query('INSERT INTO admin (email, password_hash) VALUES (?, ?)', [adminEmail, hashedPassword]);
+    const [adminResult] = await conn.query(
+      'INSERT INTO admin (email, password_hash) VALUES (?, ?)',
+      [adminEmail, hashedPassword],
+    );
+    await recordActivity(conn, {
+      actorRole: 'system',
+      action: 'admin.created',
+      entityType: 'admin',
+      entityId: adminResult.insertId,
+    });
 
     console.log('Admin created successfully');
     console.log(`Email: ${adminEmail}`);
@@ -42,11 +54,27 @@ async function seedDatabase() {
       'INSERT INTO parent (email, password_hash, name) VALUES (?, ?, ?)',
       [parentEmail, parentHashedPassword, 'Sample Parent']
     );
+    await recordActivity(conn, {
+      actorRole: 'system',
+      action: 'parent.created',
+      entityType: 'parent',
+      entityId: parentResult.insertId,
+      parentId: parentResult.insertId,
+    });
+    await conn.commit();
+    transactionStarted = false;
 
     console.log('Parent account created');
     console.log(`Email: ${parentEmail}`);
 
   } catch (err) {
+    if (conn && transactionStarted) {
+      try {
+        await conn.rollback();
+      } catch (rollbackError) {
+        console.error('Failed to roll back account seeding:', rollbackError);
+      }
+    }
     console.error('Seeding error:', err);
     process.exitCode = 1;
   } finally {

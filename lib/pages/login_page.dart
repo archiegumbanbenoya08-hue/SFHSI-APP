@@ -4,7 +4,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
-import '../services/app_connection_service.dart';
+import '../services/backend_api_service.dart';
 import '../services/parent_account_service.dart';
 import 'admin_page.dart';
 import 'parent_page.dart';
@@ -29,20 +29,15 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  Future<void> _navigateToAccount(String email) async {
-    final accountService = ParentAccountService();
-    final currentAdminEmail = await accountService.getAdminEmail();
-    final isAdminLogin = email == currentAdminEmail || email == ParentAccountService.adminEmail;
-
+  Future<void> _navigateToAccount(BackendUser user) async {
     if (!mounted) return;
 
-    await accountService.setLastLoggedInEmail(email);
-    if (isAdminLogin) {
+    if (user.role == 'admin') {
       _navigateWithFade(const AdminPage());
       return;
     }
 
-    _navigateWithFade(ParentPage(email: email));
+    _navigateWithFade(ParentPage(email: user.email));
   }
 
   void _navigateWithFade(Widget page) {
@@ -72,29 +67,10 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => _isLoading = true);
 
     try {
-      final accountService = ParentAccountService();
-      final isValidCredentials = await accountService.verifyCredentials(email, password);
-
-      if (mounted) {
-        if (isValidCredentials) {
-          final connectionService = AppConnectionService();
-          final isConnected = await connectionService.canUseApp();
-          if (!isConnected) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Offline mode: saved account login is available, but live campus updates require internet.'),
-              ),
-            );
-          }
-          await _navigateToAccount(email);
-          // clear password after successful login for basic security
-          if (mounted) _passwordController.clear();
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Invalid credentials')),
-          );
-        }
-      }
+      final user = await ParentAccountService().signIn(email, password);
+      if (!mounted) return;
+      _passwordController.clear();
+      await _navigateToAccount(user);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

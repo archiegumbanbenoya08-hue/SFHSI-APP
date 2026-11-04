@@ -4,6 +4,7 @@ USE scmcies_db;
 CREATE TABLE IF NOT EXISTS admin (
   id INT AUTO_INCREMENT PRIMARY KEY,
   email VARCHAR(255) NOT NULL UNIQUE,
+  name VARCHAR(255) NOT NULL DEFAULT 'Administrator',
   password_hash VARCHAR(255) NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -41,6 +42,38 @@ CREATE TABLE IF NOT EXISTS entry_exit_log (
   confidence_score DECIMAL(5, 2),
   FOREIGN KEY (student_id) REFERENCES student(id) ON DELETE CASCADE,
   INDEX (student_id, timestamp DESC)
+);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  actor_role ENUM('admin', 'parent', 'system') NOT NULL,
+  actor_id INT NULL,
+  actor_email VARCHAR(255) NULL,
+  action VARCHAR(100) NOT NULL,
+  entity_type VARCHAR(50) NULL,
+  entity_id VARCHAR(64) NULL,
+  parent_id INT NULL,
+  details JSON NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_activity_actor_time (actor_role, actor_id, created_at),
+  INDEX idx_activity_parent_time (parent_id, created_at),
+  INDEX idx_activity_entity (entity_type, entity_id),
+  CONSTRAINT fk_activity_parent
+    FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS app_message (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  sender_role ENUM('admin', 'parent') NOT NULL,
+  sender_id INT NOT NULL,
+  sender_email VARCHAR(255) NOT NULL,
+  receiver_role ENUM('admin', 'parent') NOT NULL,
+  receiver_id INT NOT NULL,
+  receiver_email VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_message_conversation (sender_role, sender_id, receiver_role, receiver_id, created_at),
+  INDEX idx_message_reverse (receiver_role, receiver_id, sender_role, sender_id, created_at)
 );
 
 CREATE INDEX idx_email ON admin(email);

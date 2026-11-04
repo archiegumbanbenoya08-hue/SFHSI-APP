@@ -4,11 +4,12 @@ A complete, fully functional student campus monitoring system with face recognit
 
 ## System Overview
 
-The SCMCIES system consists of three main components:
+The SCMCIES system includes:
 
 1. **Mini PC Client** - Face recognition Python script that runs at the campus gate
-2. **Node.js Backend** - REST API with JWT authentication, database management, and email notifications
-3. **React Frontend** - Web dashboards for admins and parents
+2. **Node.js Backend** - Attendance REST API with JWT authentication, database management, and email notifications
+3. **FastAPI Backend** - Mobile API used by Flutter for account, student, messaging, and activity data
+4. **React and Flutter apps** - Web and mobile dashboards for administrators and parents
 
 ## Architecture Flow
 
@@ -31,7 +32,8 @@ Web dashboards update in real-time (30-second refresh)
 ## Prerequisites
 
 ### System Requirements
-- Windows/Linux/Mac with Python 3.8+
+- Windows/Linux/Mac with Python 3.8+ for the Mini PC client
+- Python 3.10+ for the FastAPI backend
 - Node.js 14+ and npm
 - MySQL 5.7+ or MySQL 8.0
 - Modern web browser
@@ -58,6 +60,20 @@ mysql -u root < backend-node\schema.sql
 ```bash
 mysql -u root -p < backend-node/schema.sql
 # Enter your MySQL password when prompted
+```
+
+For an existing database, apply the activity log migration (the full schema contains indexes that are not intended to be recreated).
+
+Windows Command Prompt:
+
+```cmd
+mysql -u root -p scmcies_db < backend-node\migrations\001_activity_log.sql
+```
+
+Linux/macOS:
+
+```sh
+mysql -u root -p scmcies_db < backend-node/migrations/001_activity_log.sql
 ```
 
 ### 2. Backend Setup
@@ -128,7 +144,68 @@ npm run dev
 
 Server should be running at http://localhost:8000
 
-### 3. Frontend Setup
+#### Activity Logs
+
+The backend stores non-attendance activity in MySQL's `activity_log` table:
+
+- Successful and failed administrator and parent sign-ins.
+- Administrator-created student records, updates, and deletions.
+- Administrator and parent account provisioning performed by the setup scripts.
+
+Student changes and their activity records are written in one database transaction. Attendance remains in `entry_exit_log` and is not copied into the activity log. Passwords and authentication tokens are never recorded.
+
+Authenticated API endpoints:
+
+- `GET /api/activity/admin?limit=100` — administrator activity.
+- `GET /api/activity/parent?limit=100` — activity for the signed-in parent and their linked student records.
+
+### 3. FastAPI Setup for Flutter
+
+The Flutter app uses FastAPI for login and database-backed account profiles, student records, messages, and activity. FastAPI shares the MySQL database and JWT secrets with the Node.js backend. It does not write attendance events to `activity_log`.
+
+For an existing database, apply the migrations once, in order. The FastAPI migration `002_flutter_data.sql` adds the admin name column and message table; do not run it if you already applied equivalent schema changes.
+
+Windows Command Prompt:
+
+```cmd
+mysql -u root -p scmcies_db < backend-node\migrations\001_activity_log.sql
+mysql -u root -p scmcies_db < backend-fastapi\migrations\002_flutter_data.sql
+```
+
+Linux/macOS:
+
+```sh
+mysql -u root -p scmcies_db < backend-node/migrations/001_activity_log.sql
+mysql -u root -p scmcies_db < backend-fastapi/migrations/002_flutter_data.sql
+```
+
+For a new database created from `backend-node\schema.sql`, these tables and columns are already present, so migrations are not needed.
+
+```powershell
+cd backend-fastapi
+copy .env.example .env
+python -m pip install -r requirements.txt
+```
+
+Set `DB_HOST`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` to the same database used by Node.js. Copy the exact `JWT_ADMIN_SECRET` and `JWT_PARENT_SECRET` values from `backend-node\.env`; the services must use matching secrets. Start the API:
+
+```powershell
+python -m uvicorn main:app --host 0.0.0.0 --port 8001
+```
+
+Configure the Flutter API URL when running the app:
+
+```powershell
+# Android emulator talking to a FastAPI server on the development computer
+flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8001/api
+
+# Windows, macOS, or Flutter web on the same computer
+flutter run --dart-define=API_BASE_URL=http://localhost:8001/api
+```
+
+For a physical phone, use the development computer's LAN IP instead of `10.0.2.2` and allow the phone through the firewall. Use HTTPS for deployed services. If using Flutter web, add its exact origin to FastAPI's `FRONTEND_URL`.
+
+### 4. Frontend Setup
 
 ```bash
 cd frontend
@@ -148,7 +225,7 @@ npm start
 
 Frontend should open at http://localhost:3000
 
-### 4. Mini PC Client Setup
+### 5. Mini PC Client Setup
 
 #### Install dlib and face_recognition Dependencies
 

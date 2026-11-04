@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcrypt';
 import dotenv from 'dotenv';
+import { recordActivity } from './services/activityLog.js';
 
 dotenv.config();
 
@@ -50,6 +51,14 @@ for (const account of parentAccounts) {
     'INSERT INTO parent (email, password_hash, name) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), name = VALUES(name)',
     [account.email, hash, account.name]
   );
+  const [parents] = await conn.execute('SELECT id FROM parent WHERE email = ?', [account.email]);
+  await recordActivity(conn, {
+    actorRole: 'system',
+    action: 'parent.provisioned',
+    entityType: 'parent',
+    entityId: parents[0].id,
+    parentId: parents[0].id,
+  });
   console.log(`Created/updated: ${account.email}`);
 }
 

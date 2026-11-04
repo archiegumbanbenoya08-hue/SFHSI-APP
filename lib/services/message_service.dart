@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'backend_api_service.dart';
+
 class ChatMessage {
   final String sender;
   final String receiver;
@@ -30,8 +32,8 @@ class ChatMessage {
         sender: json['sender'] ?? '',
         receiver: json['receiver'] ?? '',
         text: json['text'] ?? '',
-        createdAt: DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now(),
-        isAdmin: json['isAdmin'] ?? false,
+        createdAt: DateTime.tryParse('${json['createdAt'] ?? ''}') ?? DateTime.now(),
+        isAdmin: json['isAdmin'] == true || json['isAdmin'] == 1,
       );
 }
 
@@ -48,27 +50,15 @@ class AppNotificationItem {
 }
 
 class MessageService {
-  static const String _messagesKey = 'scmcies_messages';
   static const String _notificationsKey = 'scmcies_notifications';
 
   Future<List<ChatMessage>> getConversation(String currentUser, String otherUser) async {
-    final all = await _loadMessages();
-    final current = currentUser.trim().toLowerCase();
-    final other = otherUser.trim().toLowerCase();
-
-    return all.where((message) {
-      final sender = message.sender.trim().toLowerCase();
-      final receiver = message.receiver.trim().toLowerCase();
-      final matchesDirect = (sender == current && receiver == other) || (sender == other && receiver == current);
-      return matchesDirect;
-    }).toList();
-  }
-
-  Future<List<ChatMessage>> _loadMessages() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_messagesKey) ?? '[]';
-    final decoded = jsonDecode(raw) as List;
-    return decoded.map((item) => ChatMessage.fromJson(item)).toList();
+    final user = BackendApiService.instance.currentUser;
+    if (user == null || user.email.toLowerCase() != currentUser.trim().toLowerCase()) {
+      throw const BackendApiException('Please sign in again to view messages.');
+    }
+    final messages = await BackendApiService.instance.getConversation(otherUser);
+    return messages.map(ChatMessage.fromJson).toList();
   }
 
   Future<void> saveMessage({
@@ -80,17 +70,15 @@ class MessageService {
     final sanitizedText = text.trim();
     if (sanitizedText.isEmpty) return;
 
-    final prefs = await SharedPreferences.getInstance();
-    final all = await _loadMessages();
-    all.add(ChatMessage(
-      sender: sender,
-      receiver: receiver,
-      text: sanitizedText,
-      createdAt: DateTime.now(),
-      isAdmin: isAdmin,
-    ));
-
-    await prefs.setString(_messagesKey, jsonEncode(all.map((message) => message.toJson()).toList()));
+    final user = BackendApiService.instance.currentUser;
+    if (user == null || user.email.toLowerCase() != sender.trim().toLowerCase() ||
+        (user.role == 'admin') != isAdmin) {
+      throw const BackendApiException('Please sign in again to send messages.');
+    }
+    await BackendApiService.instance.sendMessage(
+      receiverEmail: receiver,
+      message: sanitizedText,
+    );
     await _pushLocalNotification(
       title: isAdmin ? 'Admin message' : 'Parent message',
       body: sanitizedText,

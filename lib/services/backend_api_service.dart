@@ -33,6 +33,36 @@ class BackendUser {
   );
 }
 
+class AdminStatistics {
+  const AdminStatistics({
+    required this.totalStudents,
+    required this.studentsOnCampus,
+    required this.entriesToday,
+    required this.exitsToday,
+  });
+
+  final int totalStudents;
+  final int studentsOnCampus;
+  final int entriesToday;
+  final int exitsToday;
+
+  factory AdminStatistics.fromJson(Map<String, dynamic> json) {
+    int readCount(String key) {
+      final value = json[key];
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      throw BackendApiException('The server returned an invalid $key count.');
+    }
+
+    return AdminStatistics(
+      totalStudents: readCount('totalStudents'),
+      studentsOnCampus: readCount('studentsOnCampus'),
+      entriesToday: readCount('entriesToday'),
+      exitsToday: readCount('exitsToday'),
+    );
+  }
+}
+
 class BackendApiService {
   BackendApiService({http.Client? client, String? baseUrl})
     : _client = client ?? http.Client(),
@@ -60,6 +90,55 @@ class BackendApiService {
       body: {'email': email.trim(), 'password': password},
       authenticated: false,
     );
+    return _saveSession(response);
+  }
+
+  Future<String> requestParentSignup({
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    final response = await _request(
+      'POST',
+      '/auth/register',
+      body: {'name': name.trim(), 'email': email.trim(), 'password': password},
+      authenticated: false,
+    );
+    final normalizedEmail = response['email'];
+    if (response['verification_required'] != true ||
+        normalizedEmail is! String ||
+        normalizedEmail.isEmpty) {
+      throw const BackendApiException(
+        'The server returned an invalid sign-up response.',
+      );
+    }
+    return normalizedEmail;
+  }
+
+  Future<BackendUser> verifyParentEmail({
+    required String email,
+    required String code,
+  }) async {
+    final response = await _request(
+      'POST',
+      '/auth/verify-email',
+      body: {'email': email.trim(), 'code': code},
+      authenticated: false,
+    );
+    return _saveSession(response);
+  }
+
+  Future<BackendUser> signInWithGoogle(String idToken) async {
+    final response = await _request(
+      'POST',
+      '/auth/google',
+      body: {'id_token': idToken},
+      authenticated: false,
+    );
+    return _saveSession(response);
+  }
+
+  BackendUser _saveSession(Map<String, dynamic> response) {
     final token = response['token'];
     if (token is! String || token.isEmpty) {
       throw const BackendApiException('The server returned an invalid login response.');
@@ -112,6 +191,9 @@ class BackendApiService {
 
   Future<List<Map<String, dynamic>>> getStudents() =>
       _getList('/students');
+
+  Future<AdminStatistics> getAdminStatistics() async =>
+      AdminStatistics.fromJson(await _request('GET', '/admin/statistics'));
 
   Future<List<Map<String, dynamic>>> getChildren(int parentId) =>
       _getList('/parents/$parentId/children');

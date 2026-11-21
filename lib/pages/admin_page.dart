@@ -93,6 +93,7 @@ class _AdminPageState extends State<AdminPage> {
   String _selectedSection = 'students';
 
   final List<AdminStudent> _students = [];
+  AdminStatistics? _statistics;
 
   @override
   void initState() {
@@ -113,28 +114,31 @@ class _AdminPageState extends State<AdminPage> {
     }).toList();
   }
 
-  int get _totalStudents => _filteredStudents.length;
+  int get _totalStudents =>
+      _statistics?.totalStudents ?? _filteredStudents.length;
 
-  int get _currentlyInside => _filteredStudents
-      .where((student) => student.status == 'Inside Campus')
-      .length;
+  int get _currentlyInside =>
+      _statistics?.studentsOnCampus ??
+      _filteredStudents
+          .where((student) => student.status == 'Inside Campus')
+          .length;
 
-  int get _totalEntries =>
-      _students.where((student) => student.status == 'Inside Campus').length;
+  int get _totalEntries => _statistics?.entriesToday ?? 0;
 
-  int get _totalExits =>
-      _students.where((student) => student.status == 'Outside Campus').length;
+  int get _totalExits => _statistics?.exitsToday ?? 0;
 
   Future<void> _loadAdminSettings() async {
     try {
       final api = BackendApiService.instance;
       final profile = await api.getProfile();
       final students = await api.getStudents();
+      final statistics = await api.getAdminStatistics();
       if (!mounted) return;
 
       setState(() {
         _adminEmail = profile.email;
         _adminName = profile.name;
+        _statistics = statistics;
         _students
           ..clear()
           ..addAll(students.map(AdminStudent.fromJson));
@@ -520,7 +524,7 @@ class _AdminPageState extends State<AdminPage> {
                       child: _buildStatCard(
                         icon: Icons.login,
                         title: _totalEntries.toString(),
-                        subtitle: 'Total Entries',
+                        subtitle: 'Entries Today',
                         color: const Color(0xFFB38157),
                       ),
                     ),
@@ -529,7 +533,7 @@ class _AdminPageState extends State<AdminPage> {
                       child: _buildStatCard(
                         icon: Icons.logout,
                         title: _totalExits.toString(),
-                        subtitle: 'Total Exits',
+                        subtitle: 'Exits Today',
                         color: const Color(0xFFB38157),
                       ),
                     ),
@@ -745,8 +749,8 @@ class _AdminPageState extends State<AdminPage> {
                     Expanded(
                       child: _buildStatCard(
                         icon: Icons.login,
-                        title: '6',
-                        subtitle: 'Total Entries',
+                        title: _totalEntries.toString(),
+                        subtitle: 'Entries Today',
                         color: const Color(0xFF5DBF7A),
                       ),
                     ),
@@ -754,8 +758,8 @@ class _AdminPageState extends State<AdminPage> {
                     Expanded(
                       child: _buildStatCard(
                         icon: Icons.logout,
-                        title: '2',
-                        subtitle: 'Total Exits',
+                        title: _totalExits.toString(),
+                        subtitle: 'Exits Today',
                         color: const Color(0xFFE09A58),
                       ),
                     ),
@@ -976,7 +980,14 @@ class _AdminPageState extends State<AdminPage> {
               ),
             ],
           ),
-          actions: [_buildNotificationActionButton()],
+          actions: [
+            IconButton(
+              tooltip: 'Refresh dashboard',
+              onPressed: _loadAdminSettings,
+              icon: const Icon(Icons.refresh, color: Colors.white),
+            ),
+            _buildNotificationActionButton(),
+          ],
         ),
         body: ColoredBox(
           color: const Color(0xFF3A1C10),

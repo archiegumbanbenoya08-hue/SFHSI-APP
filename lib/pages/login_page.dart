@@ -84,6 +84,60 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  Future<void> _handleEmailSignUp() async {
+    final details = await showDialog<EmailSignUpDetails>(
+      context: context,
+      builder: (context) => const _EmailSignUpDialog(),
+    );
+    if (details == null || !mounted) return;
+
+    setState(() => _isLoading = true);
+    try {
+      final service = ParentAccountService();
+      final email = await service.requestEmailSignup(
+        name: details.name,
+        email: details.email,
+        password: details.password,
+      );
+      if (!mounted) return;
+
+      final user = await showDialog<BackendUser>(
+        context: context,
+        builder: (context) => _EmailVerificationDialog(
+          email: email,
+          onVerify: (code) =>
+              service.verifyEmailSignup(email: email, code: code),
+        ),
+      );
+      if (user == null || !mounted) return;
+      await _navigateToAccount(user);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not create account: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _handleGoogleSignUp() async {
+    setState(() => _isLoading = true);
+    try {
+      final user = await ParentAccountService().signInWithGoogle();
+      if (user != null && mounted) await _navigateToAccount(user);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Google sign-up failed: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -238,6 +292,36 @@ class _LoginPageState extends State<LoginPage> {
                                 ),
                               ),
                               const SizedBox(height: 12),
+                              const Text(
+                                'Or create a parent account',
+                                style: TextStyle(color: Colors.black54),
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: _isLoading ? null : _handleGoogleSignUp,
+                                  icon: const Text(
+                                    'G',
+                                    style: TextStyle(
+                                      color: Color(0xFF4285F4),
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  label: const Text('Sign up with Google'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.black87,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _isLoading ? null : _handleEmailSignUp,
+                                child: const Text('Sign up with email'),
+                              ),
                             ],
                           ),
                         ),
@@ -251,6 +335,226 @@ class _LoginPageState extends State<LoginPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class EmailSignUpDetails {
+  const EmailSignUpDetails({
+    required this.name,
+    required this.email,
+    required this.password,
+  });
+
+  final String name;
+  final String email;
+  final String password;
+}
+
+class _EmailSignUpDialog extends StatefulWidget {
+  const _EmailSignUpDialog();
+
+  @override
+  State<_EmailSignUpDialog> createState() => _EmailSignUpDialogState();
+}
+
+class _EmailSignUpDialogState extends State<_EmailSignUpDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    Navigator.pop(
+      context,
+      EmailSignUpDetails(
+        name: _nameController.text.trim(),
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Create parent account'),
+      content: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: _nameController,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Full name'),
+                validator: (value) => value == null || value.trim().isEmpty
+                    ? 'Enter your name'
+                    : null,
+              ),
+              TextFormField(
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Email'),
+                validator: (value) {
+                  final email = value?.trim() ?? '';
+                  return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)
+                      ? null
+                      : 'Enter a valid email address';
+                },
+              ),
+              TextFormField(
+                controller: _passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Password (at least 8 characters)',
+                ),
+                validator: (value) {
+                  final password = value ?? '';
+                  if (password.length < ParentAccountService.minimumPasswordLength ||
+                      password.contains(RegExp(r'\s'))) {
+                    return 'Use 8 or more characters with no spaces';
+                  }
+                  return null;
+                },
+              ),
+              TextFormField(
+                controller: _confirmPasswordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Confirm password',
+                ),
+                validator: (value) => value != _passwordController.text
+                    ? 'Passwords do not match'
+                    : null,
+                onFieldSubmitted: (_) => _submit(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _submit,
+          child: const Text('Create account'),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmailVerificationDialog extends StatefulWidget {
+  const _EmailVerificationDialog({
+    required this.email,
+    required this.onVerify,
+  });
+
+  final String email;
+  final Future<BackendUser> Function(String code) onVerify;
+
+  @override
+  State<_EmailVerificationDialog> createState() =>
+      _EmailVerificationDialogState();
+}
+
+class _EmailVerificationDialogState extends State<_EmailVerificationDialog> {
+  final _codeController = TextEditingController();
+  String? _error;
+  bool _isSubmitting = false;
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final code = _codeController.text.trim();
+    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+      setState(() => _error = 'Enter the six-digit code from your email');
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _error = null;
+    });
+    try {
+      final user = await widget.onVerify(code);
+      if (mounted) Navigator.pop(context, user);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Verify your email'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('We sent a six-digit code to ${widget.email}.'),
+          const SizedBox(height: 4),
+          const Text(
+            'The code expires in 15 minutes. To request another, start sign-up again after one minute.',
+            style: TextStyle(fontSize: 12, color: Colors.black54),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _codeController,
+            enabled: !_isSubmitting,
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            decoration: const InputDecoration(
+              labelText: 'Verification code',
+              counterText: '',
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _isSubmitting ? null : _submit,
+          child: _isSubmitting
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Verify email'),
+        ),
+      ],
     );
   }
 }

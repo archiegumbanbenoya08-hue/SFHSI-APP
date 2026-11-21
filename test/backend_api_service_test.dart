@@ -72,6 +72,109 @@ void main() {
     );
   });
 
+  test('Parent email verification and Google sign-up use public endpoints', () async {
+    final requests = <http.Request>[];
+    final api = BackendApiService(
+      baseUrl: 'https://api.example.test/api',
+      client: MockClient((request) async {
+        requests.add(request);
+        if (request.url.path == '/api/auth/register') {
+          return http.Response(
+            jsonEncode({
+              'verification_required': true,
+              'email': 'parent@example.com',
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'id': 23,
+            'email': 'parent@example.com',
+            'name': 'Parent',
+            'role': 'parent',
+            'token': 'parent-token',
+          }),
+          200,
+        );
+      }),
+    );
+
+    final email = await api.requestParentSignup(
+      name: 'Parent',
+      email: 'parent@example.com',
+      password: 'safe-password',
+    );
+    expect(email, 'parent@example.com');
+    final verifiedUser = await api.verifyParentEmail(
+      email: email,
+      code: '123456',
+    );
+    await api.signInWithGoogle('verified-google-id-token');
+
+    expect(requests[0].url.path, '/api/auth/register');
+    expect(requests[0].headers.containsKey('Authorization'), isFalse);
+    expect(jsonDecode(requests[0].body), {
+      'name': 'Parent',
+      'email': 'parent@example.com',
+      'password': 'safe-password',
+    });
+    expect(requests[1].url.path, '/api/auth/verify-email');
+    expect(requests[1].headers.containsKey('Authorization'), isFalse);
+    expect(jsonDecode(requests[1].body), {
+      'email': 'parent@example.com',
+      'code': '123456',
+    });
+    expect(verifiedUser.role, 'parent');
+    expect(requests[2].url.path, '/api/auth/google');
+    expect(requests[2].headers.containsKey('Authorization'), isFalse);
+    expect(jsonDecode(requests[2].body), {
+      'id_token': 'verified-google-id-token',
+    });
+  });
+
+  test('Admin statistics use the authenticated API and parse daily counts', () async {
+    final requests = <http.Request>[];
+    final api = BackendApiService(
+      baseUrl: 'https://api.example.test/api',
+      client: MockClient((request) async {
+        requests.add(request);
+        if (request.url.path == '/api/auth/login') {
+          return http.Response(
+            jsonEncode({
+              'id': 1,
+              'email': 'admin@example.com',
+              'name': 'Admin',
+              'role': 'admin',
+              'token': 'admin-token',
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'totalStudents': 25,
+            'studentsOnCampus': 8,
+            'entriesToday': 12,
+            'exitsToday': 4,
+          }),
+          200,
+        );
+      }),
+    );
+
+    await api.login('admin@example.com', 'secret');
+    final statistics = await api.getAdminStatistics();
+
+    expect(requests[1].method, 'GET');
+    expect(requests[1].url.path, '/api/admin/statistics');
+    expect(requests[1].headers['Authorization'], 'Bearer admin-token');
+    expect(statistics.totalStudents, 25);
+    expect(statistics.studentsOnCampus, 8);
+    expect(statistics.entriesToday, 12);
+    expect(statistics.exitsToday, 4);
+  });
+
   test(
     'Push device registration and removal use the authenticated session',
     () async {

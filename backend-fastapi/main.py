@@ -1,12 +1,19 @@
 import logging
 import os
+import re
+import secrets
+import smtplib
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Optional
 
 import bcrypt
 import jwt
 import psycopg
+from google.auth.exceptions import GoogleAuthError
+from google.auth.transport.requests import Request
+from google.oauth2 import id_token as google_id_token
 from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -19,6 +26,7 @@ from pydantic import BaseModel, Field
 load_dotenv(Path(__file__).parent / ".env")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 app = FastAPI(title="SCMCIES API")
 origins = {
@@ -42,6 +50,21 @@ MAX_ACTIVITY_LOGS = 500
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class ParentSignupRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class EmailVerificationRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    code: str = Field(min_length=6, max_length=6)
+
+
+class GoogleSignInRequest(BaseModel):
+    id_token: str = Field(min_length=1, max_length=8192)
 
 
 class ProfileUpdate(BaseModel):
@@ -183,6 +206,62 @@ def _user_response(user: dict[str, Any], token: str | None = None) -> dict[str, 
     return response
 
 
+def _verified_google_claims(token: str) -> dict[str, Any]:
+    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    if not client_id:
+        raise HTTPException(
+            status_code=503,
+            detail="Google sign-in is not configured",
+        )
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            token,
+            Request(),
+            audience=client_id,
+        )
+    except (ValueError, GoogleAuthError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid Google sign-in") from exc
+
+    email = claims.get("email")
+    if (
+        not claims.get("sub")
+        or not isinstance(email, str)
+        or claims.get("email_verified") is not True
+    ):
+        raise HTTPException(status_code=401, detail="Google email is not verified")
+    return claims
+
+
+def _send_parent_verification_email(email: str, code: str) -> None:
+    sender = os.getenv("GMAIL_USER", "").strip()
+    app_password = os.getenv("GMAIL_APP_PASSWORD", "").strip()
+    if not sender or not app_password:
+        raise HTTPException(
+            status_code=503,
+            detail="Email verification is not configured",
+        )
+
+    message = EmailMessage()
+    message["Subject"] = "Verify your SFHSI parent account"
+    message["From"] = sender
+    message["To"] = email
+    message.set_content(
+        f"Your SFHSI verification code is {code}. "
+        "It expires in 15 minutes. If you did not request this, ignore this email."
+    )
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as smtp:
+            smtp.starttls()
+            smtp.login(sender, app_password)
+            smtp.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
+        logger.exception("Could not send parent account verification email")
+        raise HTTPException(
+            status_code=503,
+            detail="Could not send verification email",
+        ) from exc
+
+
 @app.get("/health")
 def health():
     connection = get_connection()
@@ -192,6 +271,265 @@ def health():
         cursor.fetchone()
         cursor.close()
         return {"status": "ok", "database": "connected"}
+    finally:
+        connection.close()
+
+
+@app.post("/api/auth/register")
+def register_parent(request: ParentSignupRequest):
+    name = request.name.strip()
+    email = request.email.strip().lower()
+    password = request.password
+    if (
+        not name
+        or not EMAIL_PATTERN.fullmatch(email)
+        or any(char.isspace() for char in password)
+        or len(password.encode("utf-8")) > 72
+    ):
+        raise HTTPException(status_code=400, detail="Enter valid sign-up details")
+
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT id FROM admin WHERE LOWER(email) = %s
+            UNION ALL
+            SELECT id FROM parent WHERE LOWER(email) = %s
+            LIMIT 1
+            """,
+            (email, email),
+        )
+        if cursor.fetchone() is not None:
+            raise HTTPException(status_code=409, detail="Email is already in use")
+
+        now = datetime.now(timezone.utc)
+        cursor.execute(
+            "SELECT last_sent_at FROM pending_parent_signup WHERE email = %s FOR UPDATE",
+            (email,),
+        )
+        pending = cursor.fetchone()
+        if (
+            pending is not None
+            and (now - pending["last_sent_at"]).total_seconds() < 60
+        ):
+            connection.commit()
+            return {"verification_required": True, "email": email}
+
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        password_hash = bcrypt.hashpw(
+            password.encode("utf-8"),
+            bcrypt.gensalt(),
+        ).decode("utf-8")
+        cursor.execute(
+            """
+            INSERT INTO pending_parent_signup
+                (email, name, password_hash, verification_code_hash, expires_at, last_sent_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (email) DO UPDATE SET
+                name = EXCLUDED.name,
+                password_hash = EXCLUDED.password_hash,
+                verification_code_hash = EXCLUDED.verification_code_hash,
+                expires_at = EXCLUDED.expires_at,
+                last_sent_at = EXCLUDED.last_sent_at,
+                attempts_remaining = 5
+            """,
+            (
+                email,
+                name,
+                password_hash,
+                bcrypt.hashpw(code.encode("ascii"), bcrypt.gensalt()).decode("ascii"),
+                now + timedelta(minutes=15),
+                now,
+            ),
+        )
+        _send_parent_verification_email(email, code)
+        connection.commit()
+        return {"verification_required": True, "email": email}
+    except HTTPException:
+        connection.rollback()
+        raise
+    except UniqueViolation as exc:
+        connection.rollback()
+        raise HTTPException(status_code=409, detail="Email is already in use") from exc
+    except psycopg.Error as exc:
+        connection.rollback()
+        logger.exception("Parent sign-up failed")
+        raise HTTPException(status_code=503, detail="Sign-up service unavailable") from exc
+    finally:
+        connection.close()
+
+
+@app.post("/api/auth/verify-email")
+def verify_parent_email(request: EmailVerificationRequest):
+    email = request.email.strip().lower()
+    if (
+        not EMAIL_PATTERN.fullmatch(email)
+        or not request.code.isascii()
+        or not request.code.isdigit()
+    ):
+        raise HTTPException(status_code=400, detail="Enter a valid email and six-digit code")
+
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT name, password_hash, verification_code_hash,
+                   expires_at, attempts_remaining
+            FROM pending_parent_signup
+            WHERE email = %s
+            FOR UPDATE
+            """,
+            (email,),
+        )
+        pending = cursor.fetchone()
+        if pending is None:
+            raise HTTPException(status_code=400, detail="Verification request not found")
+
+        if pending["expires_at"] <= datetime.now(timezone.utc):
+            cursor.execute("DELETE FROM pending_parent_signup WHERE email = %s", (email,))
+            connection.commit()
+            raise HTTPException(status_code=400, detail="Verification code expired")
+        if pending["attempts_remaining"] <= 0:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many incorrect codes. Request a new code later.",
+            )
+        if not bcrypt.checkpw(
+            request.code.encode("ascii"),
+            pending["verification_code_hash"].encode("ascii"),
+        ):
+            cursor.execute(
+                """
+                UPDATE pending_parent_signup
+                SET attempts_remaining = attempts_remaining - 1
+                WHERE email = %s
+                """,
+                (email,),
+            )
+            connection.commit()
+            raise HTTPException(status_code=400, detail="Verification code is incorrect")
+
+        cursor.execute(
+            """
+            SELECT id FROM admin WHERE LOWER(email) = %s
+            UNION ALL
+            SELECT id FROM parent WHERE LOWER(email) = %s
+            LIMIT 1
+            """,
+            (email, email),
+        )
+        if cursor.fetchone() is not None:
+            cursor.execute("DELETE FROM pending_parent_signup WHERE email = %s", (email,))
+            connection.commit()
+            raise HTTPException(status_code=409, detail="Email is already in use")
+
+        cursor.execute(
+            """
+            INSERT INTO parent (email, password_hash, name)
+            VALUES (%s, %s, %s)
+            RETURNING id, email, name
+            """,
+            (email, pending["password_hash"], pending["name"]),
+        )
+        account = {**cursor.fetchone(), "role": "parent"}
+        cursor.execute("DELETE FROM pending_parent_signup WHERE email = %s", (email,))
+        record_activity(
+            connection,
+            actor_role="parent",
+            actor_id=account["id"],
+            actor_email=account["email"],
+            action="auth.signup.succeeded",
+            entity_type="parent",
+            entity_id=account["id"],
+            parent_id=account["id"],
+        )
+        token = _issue_token(account)
+        connection.commit()
+        return _user_response(account, token)
+    except HTTPException:
+        connection.rollback()
+        raise
+    except UniqueViolation as exc:
+        connection.rollback()
+        raise HTTPException(status_code=409, detail="Email is already in use") from exc
+    except psycopg.Error as exc:
+        connection.rollback()
+        logger.exception("Parent email verification failed")
+        raise HTTPException(status_code=503, detail="Email verification failed") from exc
+    finally:
+        connection.close()
+
+
+@app.post("/api/auth/google")
+def sign_in_with_google(request: GoogleSignInRequest):
+    claims = _verified_google_claims(request.id_token)
+    email = claims["email"].strip().lower()
+    google_name = claims.get("name")
+    name = google_name.strip()[:255] if isinstance(google_name, str) else ""
+    name = name or email.split("@", 1)[0]
+
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT id FROM admin WHERE LOWER(email) = %s LIMIT 1", (email,))
+        if cursor.fetchone() is not None:
+            raise HTTPException(
+                status_code=403,
+                detail="Google sign-in is available for parent accounts only",
+            )
+
+        cursor.execute(
+            "SELECT id, email, name FROM parent WHERE LOWER(email) = %s LIMIT 1",
+            (email,),
+        )
+        account = cursor.fetchone()
+        action = "auth.google.signed_in"
+        if account is None:
+            password_hash = bcrypt.hashpw(
+                secrets.token_bytes(32),
+                bcrypt.gensalt(),
+            ).decode("utf-8")
+            cursor.execute(
+                """
+                INSERT INTO parent (email, password_hash, name)
+                VALUES (%s, %s, %s)
+                RETURNING id, email, name
+                """,
+                (email, password_hash, name),
+            )
+            account = cursor.fetchone()
+            action = "auth.google.signed_up"
+
+        cursor.execute("DELETE FROM pending_parent_signup WHERE email = %s", (email,))
+        account = {**account, "role": "parent"}
+        record_activity(
+            connection,
+            actor_role="parent",
+            actor_id=account["id"],
+            actor_email=account["email"],
+            action=action,
+            entity_type="parent",
+            entity_id=account["id"],
+            parent_id=account["id"],
+        )
+        token = _issue_token(account)
+        connection.commit()
+        return _user_response(account, token)
+    except HTTPException:
+        connection.rollback()
+        raise
+    except UniqueViolation as exc:
+        connection.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Account changed during sign-in. Please try again.",
+        ) from exc
+    except psycopg.Error as exc:
+        connection.rollback()
+        logger.exception("Google sign-in failed")
+        raise HTTPException(status_code=503, detail="Sign-in service unavailable") from exc
     finally:
         connection.close()
 
@@ -528,6 +866,61 @@ def list_students(user: dict[str, Any] = Depends(get_current_user)):
             """
         )
         return cursor.fetchall()
+    finally:
+        connection.close()
+
+
+@app.get("/api/admin/statistics")
+def admin_statistics(user: dict[str, Any] = Depends(get_current_user)):
+    require_role(user, "admin")
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT
+                (SELECT COUNT(*)::int FROM student) AS total_students,
+                (
+                    SELECT COUNT(*)::int
+                    FROM (
+                        SELECT DISTINCT ON (student_id) student_id, event_type
+                        FROM entry_exit_log
+                        ORDER BY student_id, timestamp DESC, id DESC
+                    ) latest
+                    WHERE latest.event_type = 'ENTRY'
+                ) AS students_on_campus,
+                (
+                    SELECT COUNT(*)::int
+                    FROM entry_exit_log
+                    WHERE event_type = 'ENTRY'
+                      AND timestamp >=
+                          date_trunc('day', now() AT TIME ZONE 'Asia/Manila')
+                          AT TIME ZONE 'Asia/Manila'
+                      AND timestamp <
+                          (date_trunc('day', now() AT TIME ZONE 'Asia/Manila')
+                           + INTERVAL '1 day') AT TIME ZONE 'Asia/Manila'
+                ) AS entries_today,
+                (
+                    SELECT COUNT(*)::int
+                    FROM entry_exit_log
+                    WHERE event_type = 'EXIT'
+                      AND timestamp >=
+                          date_trunc('day', now() AT TIME ZONE 'Asia/Manila')
+                          AT TIME ZONE 'Asia/Manila'
+                      AND timestamp <
+                          (date_trunc('day', now() AT TIME ZONE 'Asia/Manila')
+                           + INTERVAL '1 day') AT TIME ZONE 'Asia/Manila'
+                ) AS exits_today
+            """
+        )
+        statistics = cursor.fetchone()
+        cursor.close()
+        return {
+            "totalStudents": statistics["total_students"],
+            "studentsOnCampus": statistics["students_on_campus"],
+            "entriesToday": statistics["entries_today"],
+            "exitsToday": statistics["exits_today"],
+        }
     finally:
         connection.close()
 

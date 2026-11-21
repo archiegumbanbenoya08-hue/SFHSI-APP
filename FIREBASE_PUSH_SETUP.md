@@ -45,6 +45,35 @@ notification permission. Replace the `REPLACE_WITH_FIREBASE_...` values in
 can enable or disable attendance alerts in **Settings**; administrators are
 registered for alerts after sign-in.
 
+## 2a. Enable parent sign-up with Google
+
+The login screen provides email/password registration and Google sign-up for
+**parent accounts only**. Admin accounts remain administrator-created. FastAPI
+verifies Google ID tokens directly; Firebase Authentication is not required.
+
+1. In Google Cloud Console, configure the OAuth consent screen and create a
+   **Web application** OAuth client. Configure the app's web origin if using
+   Flutter Web.
+2. Set that Web client ID as `GOOGLE_OAUTH_CLIENT_ID` in the FastAPI service's
+   Render environment and provide the same public client ID when building
+   Flutter:
+
+   ```powershell
+   flutter build apk --dart-define-from-file=firebase-config.json `
+     --dart-define=GOOGLE_OAUTH_CLIENT_ID=YOUR-WEB-CLIENT-ID.apps.googleusercontent.com `
+     --dart-define=API_BASE_URL=https://YOUR-FASTAPI.onrender.com/api
+   ```
+
+3. Configure platform OAuth clients in the same Google Cloud project. For
+   Android, use the app's package ID and signing certificate SHA-1; for iOS,
+   use its bundle ID and register the reversed client ID URL scheme. Download
+   fresh Firebase Android/iOS configuration files after registering the app
+   IDs. Do not publish with the current `com.example.example` IDs.
+4. Rebuild and install the app. A successful Google sign-up creates a parent
+   account using Google's verified email; an admin still needs to associate
+   that parent with their student. Email/password sign-up sends a six-digit
+   code that must be verified before an account is created.
+
 ## 3. Deploy the APIs to Render
 
 The project includes a `render.yaml` blueprint for the Node attendance API
@@ -62,8 +91,12 @@ Set the same strong, randomly generated `JWT_ADMIN_SECRET` and
 and use that exact value in the Mini PC's private `.env` file. Set
 `FIREBASE_SERVICE_ACCOUNT_JSON` on the Node service to the contents of the
 Firebase Admin service-account JSON file; keep that file out of Git and out
-of the Flutter app. Set `FRONTEND_URL` to the deployed Flutter web origin on
-each service (or `http://localhost:3000` while testing locally).
+of the Flutter app. Set `GOOGLE_OAUTH_CLIENT_ID` on FastAPI to the Google Web
+OAuth client ID used by Flutter. Set `FRONTEND_URL` to the deployed Flutter web
+origin on each service (or `http://localhost:3000` while testing locally). Set
+`GMAIL_USER` and `GMAIL_APP_PASSWORD` to a Gmail account and its App Password;
+these are used to send email verification codes and must be kept in Render
+secrets.
 
 After deploying, copy the Node service's HTTPS URL into the Mini PC's `API_URL`
 and copy the FastAPI service's HTTPS URL with `/api` appended into the Flutter
@@ -99,6 +132,12 @@ used by the app and the Node attendance API must point at the same hosted
 PostgreSQL database.
 
 ## 5. Database and delivery checks
+
+Apply the pending-parent-sign-up migration before enabling email registration:
+
+```powershell
+npx supabase db push --remote
+```
 
 The Supabase migration for device tokens is
 `supabase/migrations/20261121032200_push_device_tokens.sql`. Apply pending

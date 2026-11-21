@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:sfhsi_app/main.dart';
+import 'package:sfhsi_app/pages/login_page.dart';
 import 'package:sfhsi_app/pages/parent_page.dart';
 import 'package:sfhsi_app/services/app_connection_service.dart';
 import 'package:sfhsi_app/services/parent_account_service.dart';
@@ -19,6 +20,15 @@ void main() {
     await tester.pumpWidget(const MyApp());
 
     expect(find.text('Welcome to SFHSI System'), findsOneWidget);
+  });
+
+  testWidgets('Login page offers email and Google sign-up', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: LoginPage()));
+
+    expect(find.text('Sign up with email'), findsOneWidget);
+    expect(find.text('Sign up with Google'), findsOneWidget);
   });
 
   testWidgets('Parent page renders without notification crash', (

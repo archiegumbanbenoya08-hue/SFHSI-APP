@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../services/app_connection_service.dart';
 import '../services/backend_api_service.dart';
-import '../services/message_service.dart';
 import '../services/parent_account_service.dart';
 
 class AdminPage extends StatefulWidget {
@@ -93,10 +91,6 @@ class _AdminPageState extends State<AdminPage> {
   String _adminName = 'Administrator';
   String _adminEmail = '';
   String _selectedSection = 'students';
-  String _selectedParentEmail = '';
-  List<String> _parentEmails = [];
-  bool _parentsCollapsed = false;
-  final TextEditingController _adminMessageController = TextEditingController();
 
   final List<AdminStudent> _students = [];
 
@@ -104,12 +98,6 @@ class _AdminPageState extends State<AdminPage> {
   void initState() {
     super.initState();
     _loadAdminSettings();
-  }
-
-  @override
-  void dispose() {
-    _adminMessageController.dispose();
-    super.dispose();
   }
 
   List<AdminStudent> get _filteredStudents {
@@ -141,20 +129,12 @@ class _AdminPageState extends State<AdminPage> {
     try {
       final api = BackendApiService.instance;
       final profile = await api.getProfile();
-      final parents = await api.getParents();
       final students = await api.getStudents();
       if (!mounted) return;
 
       setState(() {
         _adminEmail = profile.email;
         _adminName = profile.name;
-        _parentEmails = parents
-            .map((parent) => '${parent['email'] ?? ''}')
-            .where((email) => email.isNotEmpty)
-            .toList();
-        if (!_parentEmails.contains(_selectedParentEmail)) {
-          _selectedParentEmail = _parentEmails.isEmpty ? '' : _parentEmails.first;
-        }
         _students
           ..clear()
           ..addAll(students.map(AdminStudent.fromJson));
@@ -357,11 +337,6 @@ class _AdminPageState extends State<AdminPage> {
       {'icon': Icons.people, 'title': 'Students', 'key': 'students'},
       {'icon': Icons.event, 'title': 'Events', 'key': 'events'},
       {'icon': Icons.assessment, 'title': 'Reports', 'key': 'reports'},
-      {
-        'icon': Icons.notifications,
-        'title': 'Notifications',
-        'key': 'notifications',
-      },
       {'icon': Icons.settings, 'title': 'Settings', 'key': 'settings'},
     ];
 
@@ -465,7 +440,7 @@ class _AdminPageState extends State<AdminPage> {
                   ),
                 );
                 if (should == true && mounted) {
-                  ParentAccountService().logout();
+                  await ParentAccountService().logout();
                   Navigator.pushReplacementNamed(context, '/welcome');
                 }
               },
@@ -508,513 +483,6 @@ class _AdminPageState extends State<AdminPage> {
           height: 28,
           fit: BoxFit.contain,
         ),
-      ),
-    );
-  }
-
-  void _showNotificationSheet() {
-    final notifications = [
-      {
-        'title': 'New parent message',
-        'subtitle': 'Open the message thread',
-        'destination': 'messages',
-        'icon': Icons.message,
-      },
-      {
-        'title': 'Campus update',
-        'subtitle': 'Review recent activity',
-        'destination': 'notifications',
-        'icon': Icons.notifications,
-      },
-      {
-        'title': 'Account settings',
-        'subtitle': 'Update your admin profile',
-        'destination': 'settings',
-        'icon': Icons.settings,
-      },
-    ];
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF2A120A),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Notifications',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 12),
-            ...notifications.map(
-              (item) => ListTile(
-                leading: Icon(
-                  item['icon'] as IconData,
-                  color: const Color(0xFFE7B77A),
-                ),
-                title: Text(
-                  item['title'] as String,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                subtitle: Text(
-                  item['subtitle'] as String,
-                  style: const TextStyle(color: Color(0xFFE8D7C8)),
-                ),
-                onTap: () {
-                  setState(
-                    () => _selectedSection = item['destination'] as String,
-                  );
-                  Navigator.pop(sheetContext);
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAdminMessageSection() {
-    final parentEmails = _parentEmails;
-    if (parentEmails.isEmpty) {
-      return const Center(
-        child: Text(
-          'No parent accounts found in the database.',
-          style: TextStyle(color: Colors.white70),
-        ),
-      );
-    }
-    return Container(
-      color: const Color(0xFF2A120A),
-      child: Row(
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 280),
-            width: _parentsCollapsed ? 56 : 240,
-            decoration: BoxDecoration(
-              color: const Color(0xFF2A120A),
-              border: Border(
-                right: BorderSide(color: const Color(0xFFB38157), width: 1),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      if (!_parentsCollapsed)
-                        const Padding(
-                          padding: EdgeInsets.only(left: 8.0),
-                          child: Text(
-                            'Messages',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      IconButton(
-                        icon: Icon(
-                          _parentsCollapsed
-                              ? Icons.arrow_forward_ios
-                              : Icons.arrow_back_ios,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                        onPressed: () => setState(
-                          () => _parentsCollapsed = !_parentsCollapsed,
-                        ),
-                        padding: const EdgeInsets.all(4),
-                        constraints: const BoxConstraints(),
-                      ),
-                    ],
-                  ),
-                ),
-                if (_parentsCollapsed)
-                  // Collapsed: show compact scrollable avatars so admin can scroll profiles
-                  Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: parentEmails.length,
-                      itemBuilder: (context, idx) {
-                        final email = parentEmails[idx];
-                        final displayName = email
-                            .split('@')
-                            .first
-                            .replaceAll(RegExp(r'[0-9]'), '');
-                        final initials = displayName
-                            .split('')
-                            .take(2)
-                            .join()
-                            .toUpperCase();
-                        final selected = _selectedParentEmail == email;
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6.0),
-                          child: GestureDetector(
-                            onTap: () =>
-                                setState(() => _selectedParentEmail = email),
-                            child: CircleAvatar(
-                              radius: 20,
-                              backgroundColor: selected
-                                  ? const Color(0xFFE7B77A)
-                                  : const Color(0xFFB38157),
-                              child: Text(
-                                initials,
-                                style: TextStyle(
-                                  color: selected
-                                      ? const Color(0xFF2A120A)
-                                      : const Color(0xFF2A120A),
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  )
-                else
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: parentEmails.length,
-                      itemBuilder: (context, index) {
-                        final email = parentEmails[index];
-                        return FutureBuilder<List<ChatMessage>>(
-                          future: MessageService().getConversation(
-                            _adminEmail,
-                            email,
-                          ),
-                          builder: (context, snapshot) {
-                            if (!snapshot.hasData)
-                              return const SizedBox.shrink();
-                            final messages = snapshot.data ?? [];
-                            final lastMessage = messages.isNotEmpty
-                                ? messages.last
-                                : null;
-                            final displayName = email
-                                .split('@')
-                                .first
-                                .replaceAll(RegExp(r'[0-9]'), '');
-                            final initials = displayName
-                                .split('')
-                                .take(2)
-                                .join()
-                                .toUpperCase();
-
-                            return ListTile(
-                              onTap: () =>
-                                  setState(() => _selectedParentEmail = email),
-                              selected: _selectedParentEmail == email,
-                              selectedTileColor: const Color(0xFF3D2017),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              leading: CircleAvatar(
-                                radius: 22,
-                                backgroundColor: const Color(0xFFB38157),
-                                child: Text(
-                                  initials,
-                                  style: const TextStyle(
-                                    color: Color(0xFF2A120A),
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                              title: Text(
-                                displayName,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              subtitle: Text(
-                                lastMessage != null &&
-                                        lastMessage.text.length > 30
-                                    ? '${lastMessage.text.substring(0, 30)}...'
-                                    : lastMessage?.text ?? 'No messages',
-                                style: const TextStyle(
-                                  color: Color(0xFFE8D7C8),
-                                  fontSize: 11,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              trailing: messages.isNotEmpty
-                                  ? Container(
-                                      width: 36,
-                                      height: 36,
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFE7B77A),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      alignment: Alignment.center,
-                                      child: Text(
-                                        messages.length.toString(),
-                                        style: const TextStyle(
-                                          color: Color(0xFF2A120A),
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    )
-                                  : null,
-                            );
-                          },
-                        );
-                      },
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: FutureBuilder<List<ChatMessage>>(
-              future: MessageService().getConversation(
-                _adminEmail,
-                _selectedParentEmail,
-              ),
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Text(
-                      'Could not load messages: ${snapshot.error}',
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                  );
-                }
-                final messages = snapshot.data ?? const <ChatMessage>[];
-                final displayName = _selectedParentEmail.split('@').first;
-
-                return Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF3A1C10),
-                        border: Border(
-                          bottom: BorderSide(
-                            color: const Color(0xFFB38157),
-                            width: 1,
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            radius: 20,
-                            backgroundColor: const Color(0xFFB38157),
-                            child: Text(
-                              displayName.substring(0, 1).toUpperCase(),
-                              style: const TextStyle(
-                                color: Color(0xFF2A120A),
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  displayName,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                const Text(
-                                  'Online',
-                                  style: TextStyle(
-                                    color: Color(0xFFE7B77A),
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: messages.isEmpty
-                          ? Center(
-                              child: Text(
-                                'No messages yet',
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            )
-                          : ListView.builder(
-                              padding: const EdgeInsets.all(16),
-                              itemCount: messages.length,
-                              itemBuilder: (context, index) {
-                                final message = messages[index];
-                                final isFromAdmin =
-                                    message.sender.toLowerCase() ==
-                                    _adminEmail.toLowerCase();
-                                return Align(
-                                  alignment: isFromAdmin
-                                      ? Alignment.centerRight
-                                      : Alignment.centerLeft,
-                                  child: Container(
-                                    margin: const EdgeInsets.only(bottom: 12),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 10,
-                                    ),
-                                    constraints: const BoxConstraints(
-                                      maxWidth: 300,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: isFromAdmin
-                                          ? const Color(0xFFE7B77A)
-                                          : const Color(0xFF3D2017),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: isFromAdmin
-                                          ? CrossAxisAlignment.end
-                                          : CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          message.text,
-                                          style: TextStyle(
-                                            color: isFromAdmin
-                                                ? const Color(0xFF2A120A)
-                                                : Colors.white,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          '${message.createdAt.hour}:${message.createdAt.minute.toString().padLeft(2, '0')} ${message.createdAt.hour >= 12 ? 'PM' : 'AM'}',
-                                          style: TextStyle(
-                                            color: isFromAdmin
-                                                ? const Color(
-                                                    0xFF2A120A,
-                                                  ).withValues(alpha: 0.7)
-                                                : Colors.white70,
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          top: BorderSide(
-                            color: const Color(0xFFB38157),
-                            width: 1,
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _adminMessageController,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: InputDecoration(
-                                hintText: 'Type a message...',
-                                hintStyle: const TextStyle(
-                                  color: Color(0xFFE8D7C8),
-                                ),
-                                filled: true,
-                                fillColor: const Color(0xFF3D2017),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(
-                                    color: Color(0xFFB38157),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          ElevatedButton(
-                            onPressed: () async {
-                              final text = _adminMessageController.text.trim();
-                              if (text.isEmpty) return;
-
-                              final isConnected = await AppConnectionService()
-                                  .canUseApp();
-                              if (!isConnected) {
-                                if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'Live messaging requires an internet connection.',
-                                    ),
-                                  ),
-                                );
-                                return;
-                              }
-
-                              try {
-                                await MessageService().saveMessage(
-                                  sender: _adminEmail,
-                                  receiver: _selectedParentEmail,
-                                  text: text,
-                                  isAdmin: true,
-                                );
-                                _adminMessageController.clear();
-                                if (mounted) setState(() {});
-                              } catch (error) {
-                                if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Could not send message: $error'),
-                                  ),
-                                );
-                              }
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFE7B77A),
-                              foregroundColor: const Color(0xFF2A120A),
-                            ),
-                            child: const Text('Send'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1268,7 +736,7 @@ class _AdminPageState extends State<AdminPage> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Daily campus attendance and activity summary',
+                  'Daily campus monitoring and activity summary',
                   style: TextStyle(color: Color(0xFFE8D7C8)),
                 ),
                 const SizedBox(height: 16),
@@ -1297,72 +765,6 @@ class _AdminPageState extends State<AdminPage> {
             ),
           ),
         );
-      case 'notifications':
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF3D2017),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFB38157)),
-            ),
-            child: Column(
-              children: [
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Notifications',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 30,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                InkWell(
-                  onTap: () => setState(() => _selectedSection = 'messages'),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF3D2017),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFB38157)),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFE7B77A),
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                          child: Image.asset(
-                            'assets/sfhsi.png',
-                            width: 20,
-                            height: 20,
-                            fit: BoxFit.contain,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Text(
-                            'Parent message received',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      case 'messages':
-        return _buildAdminMessageSection();
 
       case 'settings':
         return SingleChildScrollView(
@@ -1541,7 +943,7 @@ class _AdminPageState extends State<AdminPage> {
         if (didPop) return;
         final shouldLogout = await _confirmLogoutOnBack();
         if (shouldLogout && mounted) {
-          ParentAccountService().logout();
+          await ParentAccountService().logout();
           Navigator.pushReplacementNamed(context, '/welcome');
         }
       },
@@ -2094,7 +1496,7 @@ class _AdminPageState extends State<AdminPage> {
     () async {
       final should = await _confirmLogoutOnBack();
       if (should && mounted) {
-        ParentAccountService().logout();
+        await ParentAccountService().logout();
         Navigator.pushReplacementNamed(context, '/welcome');
       }
     }();

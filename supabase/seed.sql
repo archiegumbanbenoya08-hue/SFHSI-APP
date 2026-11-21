@@ -1,0 +1,1 @@
+-- Application accounts are seeded explicitly after any existing data is migrated.

@@ -1,6 +1,6 @@
 @echo off
 REM SCMCIES Complete Setup and Start Script
-REM Run this as Administrator
+REM Docker Desktop must be running before starting local Supabase.
 
 setlocal enabledelayedexpansion
 
@@ -11,17 +11,13 @@ echo SCMCIES System Setup and Start
 echo ================================================
 echo.
 
-REM Step 1: Setup Database
-echo [1/5] Setting up database...
-if exist "backend-node\schema.sql" (
-    mysql -u root < "backend-node\schema.sql"
-    if errorlevel 0 (
-        echo Database setup completed
-    ) else (
-        echo Database may already exist or MySQL needs password
-    )
-) else (
-    echo schema.sql not found
+REM Step 1: Start local Supabase
+echo [1/5] Starting local Supabase...
+call npx --yes supabase start
+if errorlevel 1 (
+    echo Failed to start Supabase. Start Docker Desktop and run this script again.
+    pause
+    exit /b 1
 )
 
 echo.
@@ -33,6 +29,13 @@ if not exist "backend-node\.env" (
     if exist "backend-node\.env.example" (
         copy "backend-node\.env.example" "backend-node\.env" >nul
         echo Created backend-node\.env
+    )
+)
+
+if not exist "backend-fastapi\.env" (
+    if exist "backend-fastapi\.env.example" (
+        copy "backend-fastapi\.env.example" "backend-fastapi\.env" >nul
+        echo Created backend-fastapi\.env
     )
 )
 
@@ -62,6 +65,18 @@ if exist "package.json" (
 )
 cd ..
 
+echo Installing FastAPI dependencies...
+cd backend-fastapi
+if exist "requirements.txt" (
+    python -m pip install -q -r requirements.txt
+    if errorlevel 1 (
+        echo Failed to install FastAPI dependencies
+        pause
+        exit /b 1
+    )
+)
+cd ..
+
 echo Installing frontend dependencies...
 cd frontend
 if exist "package.json" (
@@ -78,17 +93,9 @@ cd ..
 
 echo.
 
-REM Step 4: Seed Database
-echo [4/5] Seeding initial admin account...
-
-cd backend-node
-if exist "seed.js" (
-    call node seed.js
-    if errorlevel 1 (
-        echo Configure unique account credentials in backend-node\.env, then run this step again.
-    )
-)
-cd ..
+REM Step 4: Keep target empty for an optional migration.
+echo [4/5] Database is ready.
+echo If migrating MySQL data, do that before running node seed.js.
 
 echo.
 
@@ -98,6 +105,11 @@ echo.
 
 echo Starting Backend Server...
 start "Backend API - http://localhost:8000" cmd /k "cd backend-node && npm start"
+
+timeout /t 2 /nobreak
+
+echo Starting FastAPI Server...
+start "FastAPI - http://localhost:8001" cmd /k "cd backend-fastapi && python -m uvicorn main:app --host 0.0.0.0 --port 8001"
 
 timeout /t 2 /nobreak
 
@@ -115,11 +127,14 @@ echo Setup Complete
 echo ================================================
 echo.
 echo Services started:
+echo   Supabase Studio: http://localhost:54323
 echo   Backend API:    http://localhost:8000
+echo   FastAPI:        http://localhost:8001
 echo   Frontend:       http://localhost:3000
 echo   Mini PC Client: Running
 echo.
 echo Configure unique administrator and parent credentials in backend-node\.env.
+echo If no data was migrated, run: cd backend-node ^&^& node seed.js
 echo.
 echo Close any window to stop that service.
 echo.

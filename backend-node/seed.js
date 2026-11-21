@@ -22,27 +22,27 @@ async function seedDatabase() {
     conn = await getConnection();
 
     // Check if admin exists
-    const [admins] = await conn.query('SELECT * FROM admin LIMIT 1');
+    const { rows: admins } = await conn.query('SELECT * FROM admin LIMIT 1');
 
     if (admins.length > 0) {
       console.log('Admin already exists');
       return;
     }
 
-    await conn.beginTransaction();
+    await conn.query('BEGIN');
     transactionStarted = true;
 
     const hashedPassword = await hashPassword(adminPassword);
 
-    const [adminResult] = await conn.query(
-      'INSERT INTO admin (email, password_hash) VALUES (?, ?)',
+    const { rows: adminResult } = await conn.query(
+      'INSERT INTO admin (email, password_hash) VALUES ($1, $2) RETURNING id',
       [adminEmail, hashedPassword],
     );
     await recordActivity(conn, {
       actorRole: 'system',
       action: 'admin.created',
       entityType: 'admin',
-      entityId: adminResult.insertId,
+      entityId: adminResult[0].id,
     });
 
     console.log('Admin created successfully');
@@ -50,18 +50,18 @@ async function seedDatabase() {
 
     const parentHashedPassword = await hashPassword(parentPassword);
 
-    const [parentResult] = await conn.query(
-      'INSERT INTO parent (email, password_hash, name) VALUES (?, ?, ?)',
+    const { rows: parentResult } = await conn.query(
+      'INSERT INTO parent (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id',
       [parentEmail, parentHashedPassword, 'Sample Parent']
     );
     await recordActivity(conn, {
       actorRole: 'system',
       action: 'parent.created',
       entityType: 'parent',
-      entityId: parentResult.insertId,
-      parentId: parentResult.insertId,
+      entityId: parentResult[0].id,
+      parentId: parentResult[0].id,
     });
-    await conn.commit();
+    await conn.query('COMMIT');
     transactionStarted = false;
 
     console.log('Parent account created');
@@ -70,7 +70,7 @@ async function seedDatabase() {
   } catch (err) {
     if (conn && transactionStarted) {
       try {
-        await conn.rollback();
+        await conn.query('ROLLBACK');
       } catch (rollbackError) {
         console.error('Failed to roll back account seeding:', rollbackError);
       }

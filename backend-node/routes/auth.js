@@ -16,7 +16,7 @@ router.post('/admin/login', async (req, res) => {
     }
 
     conn = await getConnection();
-    const [adminRows] = await conn.query('SELECT id, email, password_hash FROM admin WHERE email = ?', [email]);
+    const { rows: adminRows } = await conn.query('SELECT id, email, password_hash FROM admin WHERE email = $1', [email]);
 
     if (adminRows.length === 0) {
       await recordActivity(conn, {
@@ -72,7 +72,7 @@ router.post('/parent/login', async (req, res) => {
     }
 
     conn = await getConnection();
-    const [parentRows] = await conn.query('SELECT id, email, password_hash, name FROM parent WHERE email = ?', [email]);
+    const { rows: parentRows } = await conn.query('SELECT id, email, password_hash, name FROM parent WHERE email = $1', [email]);
 
     if (parentRows.length === 0) {
       await recordActivity(conn, {

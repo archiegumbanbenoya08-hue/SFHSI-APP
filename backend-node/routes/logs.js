@@ -1,8 +1,7 @@
 import express from 'express';
 import { getConnection } from '../db.js';
 import { authenticateAdminToken, authenticateParentToken, authenticateDevice } from '../middleware/auth.js';
-import { sendEntryNotification, sendExitNotification, sendAdminEntryNotification, sendAdminExitNotification } from '../services/email.js';
-
+import { sendAttendancePush } from '../services/pushNotifications.js';
 const router = express.Router();
 
 // Post log from Mini PC (Device key protected)
@@ -17,8 +16,8 @@ router.post('/', authenticateDevice, async (req, res) => {
     const conn = await getConnection();
 
     // Get student info including parent details
-    const [students] = await conn.query(
-      'SELECT s.id, s.first_name, s.last_name, s.grade_level, s.parent_email, p.name as parent_name FROM student s JOIN parent p ON s.parent_id = p.id WHERE s.student_id = ?',
+    const { rows: students } = await conn.query(
+      'SELECT s.id, s.parent_id, s.first_name, s.last_name, s.grade_level, s.parent_email, p.name as parent_name FROM student s JOIN parent p ON s.parent_id = p.id WHERE s.student_id = $1',
       [student_id]
     );
 
@@ -30,40 +29,33 @@ router.post('/', authenticateDevice, async (req, res) => {
     const student = students[0];
 
     // Insert log
-    const [result] = await conn.query(
-      'INSERT INTO entry_exit_log (student_id, event_type, confidence_score, location) VALUES (?, ?, ?, ?)',
+    const { rows: result } = await conn.query(
+      'INSERT INTO entry_exit_log (student_id, event_type, confidence_score, location) VALUES ($1, $2, $3, $4) RETURNING id',
       [student.id, event_type, confidence_score || null, location || 'Main Gate']
     );
 
     // Update student status
     const newStatus = event_type === 'ENTRY' ? 'IN_CAMPUS' : 'NOT_IN_CAMPUS';
-    await conn.query('UPDATE student SET status = ? WHERE id = ?', [newStatus, student.id]);
+    await conn.query('UPDATE student SET status = $1 WHERE id = $2', [newStatus, student.id]);
 
     const timestamp = new Date();
-    const adminEmail = process.env.ADMIN_EMAIL || 'admin@scmcies.com';
-
     conn.release();
 
-    // Send emails in parallel using Promise.all
     try {
-      if (event_type === 'ENTRY') {
-        await Promise.all([
-          sendEntryNotification(student.parent_email, student.parent_name, student.first_name + ' ' + student.last_name, student_id, student.grade_level, timestamp),
-          sendAdminEntryNotification(adminEmail, student.first_name + ' ' + student.last_name, student_id, student.grade_level, student.parent_email, timestamp)
-        ]);
-      } else {
-        await Promise.all([
-          sendExitNotification(student.parent_email, student.parent_name, student.first_name + ' ' + student.last_name, student_id, student.grade_level, timestamp),
-          sendAdminExitNotification(adminEmail, student.first_name + ' ' + student.last_name, student_id, student.grade_level, student.parent_email, timestamp)
-        ]);
-      }
-    } catch (emailErr) {
-      console.error('Email sending error:', emailErr);
-      // Continue even if email fails
+      await sendAttendancePush({
+        parentId: student.parent_id,
+        studentId: student_id,
+        studentName: `${student.first_name} ${student.last_name}`,
+        eventType: event_type,
+        location: location || 'Main Gate',
+        timestamp,
+      });
+    } catch (pushError) {
+      console.error('ENTRY/EXIT push delivery failed:', pushError);
     }
 
     res.status(201).json({
-      id: result.insertId,
+      id: result[0].id,
       student_id,
       event_type,
       timestamp,
@@ -83,8 +75,8 @@ router.get('/last/:studentId', authenticateDevice, async (req, res) => {
     const studentId = req.params.studentId;
 
     const conn = await getConnection();
-    const [logs] = await conn.query(
-      'SELECT * FROM entry_exit_log WHERE student_id = (SELECT id FROM student WHERE student_id = ?) ORDER BY timestamp DESC LIMIT 1',
+    const { rows: logs } = await conn.query(
+      'SELECT * FROM entry_exit_log WHERE student_id = (SELECT id FROM student WHERE student_id = $1) ORDER BY timestamp DESC LIMIT 1',
       [studentId]
     );
     conn.release();
@@ -120,29 +112,29 @@ router.get('/admin/all', authenticateAdminToken, async (req, res) => {
     const params = [];
 
     if (student_id) {
-      query += ' AND s.student_id = ?';
+      query += ` AND s.student_id = $${params.length + 1}`;
       params.push(student_id);
     }
 
     if (event_type && ['ENTRY', 'EXIT'].includes(event_type)) {
-      query += ' AND l.event_type = ?';
+      query += ` AND l.event_type = $${params.length + 1}`;
       params.push(event_type);
     }
 
     if (startDate) {
-      query += ' AND l.timestamp >= ?';
+      query += ` AND l.timestamp >= $${params.length + 1}`;
       params.push(new Date(startDate));
     }
 
     if (endDate) {
-      query += ' AND l.timestamp <= ?';
+      query += ` AND l.timestamp <= $${params.length + 1}`;
       params.push(new Date(endDate));
     }
 
     query += ' ORDER BY l.timestamp DESC LIMIT 1000';
 
     const conn = await getConnection();
-    const [logs] = await conn.query(query, params);
+    const { rows: logs } = await conn.query(query, params);
     conn.release();
 
     res.json(logs);
@@ -163,13 +155,13 @@ router.get('/parent/:parentId', authenticateParentToken, async (req, res) => {
     }
 
     const conn = await getConnection();
-    const [logs] = await conn.query(
+    const { rows: logs } = await conn.query(
       `SELECT 
         l.id, l.event_type, l.timestamp, l.location,
         s.student_id, s.first_name, s.last_name, s.grade_level, s.image_path
       FROM entry_exit_log l
       JOIN student s ON l.student_id = s.id
-      WHERE s.parent_id = ?
+      WHERE s.parent_id = $1
       ORDER BY l.timestamp DESC
       LIMIT 500`,
       [parentId]

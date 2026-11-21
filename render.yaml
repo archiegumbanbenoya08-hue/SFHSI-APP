@@ -1,0 +1,42 @@
+envVarGroups:
+  - name: sfhsi-shared-backend-secrets
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_ADMIN_SECRET
+        sync: false
+      - key: JWT_PARENT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+services:
+  - type: web
+    name: sfhsi-node-api
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: npm ci --prefix backend-node
+    startCommand: node backend-node/server.js
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - fromGroup: sfhsi-shared-backend-secrets
+      - key: NODE_ENV
+        value: production
+      - key: DEVICE_API_KEY
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+
+  - type: web
+    name: sfhsi-fastapi
+    runtime: python
+    plan: free
+    rootDir: backend-fastapi
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /docs
+    autoDeploy: false
+    envVars:
+      - fromGroup: sfhsi-shared-backend-secrets

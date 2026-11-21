@@ -3,12 +3,11 @@
 // Removed unused import 'dart:io'
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/backend_api_service.dart';
 import '../services/face_recognition_service.dart';
 import '../services/parent_account_service.dart';
-
+import '../services/push_notification_service.dart';
 class ParentPage extends StatefulWidget {
   final String? email;
   const ParentPage({super.key, this.email});
@@ -35,11 +34,11 @@ class _ParentPageState extends State<ParentPage> {
   final TextEditingController _newPasswordController = TextEditingController();
   final TextEditingController _confirmPasswordController = TextEditingController();
 
-  bool _adminNotificationsEnabled = true;
   String _selectedSection = 'students';
   bool _settingsLoadStarted = false;
   bool _isLoadingChildren = false;
   List<Map<String, dynamic>> _children = [];
+  bool _pushNotificationsEnabled = true;
 
   @override
   void didChangeDependencies() {
@@ -81,6 +80,15 @@ class _ParentPageState extends State<ParentPage> {
     ]);
   }
 
+  Future<void> _loadNotificationPreferences() async {
+    final user = BackendApiService.instance.currentUser;
+    if (user == null || user.role != 'parent') return;
+    final enabled = await PushNotificationService.instance
+        .parentNotificationsEnabled(user.id);
+    if (!mounted) return;
+    setState(() => _pushNotificationsEnabled = enabled);
+  }
+
   Future<void> _loadParentChildren() async {
     final user = BackendApiService.instance.currentUser;
     if (user == null || user.role != 'parent') {
@@ -102,19 +110,6 @@ class _ParentPageState extends State<ParentPage> {
         SnackBar(content: Text('Could not load student records: $error')),
       );
     }
-  }
-
-  Future<void> _loadNotificationPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      _adminNotificationsEnabled = prefs.getBool('parent_admin_notifications_enabled') ?? true;
-    });
-  }
-
-  Future<void> _saveNotificationPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('parent_admin_notifications_enabled', _adminNotificationsEnabled);
   }
 
   Future<void> _promptParentChangeName() async {
@@ -265,7 +260,6 @@ class _ParentPageState extends State<ParentPage> {
       _DrawerItemData(icon: Icons.school, label: 'Students', key: 'students'),
       _DrawerItemData(icon: Icons.event, label: 'Events', key: 'events'),
       _DrawerItemData(icon: Icons.assessment, label: 'Reports', key: 'reports'),
-      _DrawerItemData(icon: Icons.notifications, label: 'Notifications', key: 'notifications'),
       _DrawerItemData(icon: Icons.settings, label: 'Settings', key: 'settings'),
     ];
 
@@ -316,7 +310,7 @@ class _ParentPageState extends State<ParentPage> {
                 Navigator.pop(context);
                 final shouldLogout = await _confirmLogoutOnBack();
                 if (shouldLogout && mounted) {
-                  ParentAccountService().logout();
+                  await ParentAccountService().logout();
                   Navigator.pushReplacementNamed(context, '/welcome');
                 }
               },
@@ -444,56 +438,6 @@ class _ParentPageState extends State<ParentPage> {
     );
 
     return result == true;
-  }
-
-  Widget _buildNotificationActionButton() {
-    return IconButton(
-      tooltip: 'Notifications',
-      onPressed: _showNotificationSheet,
-      icon: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.asset(
-          'assets/sfhsi.png',
-          width: 28,
-          height: 28,
-          fit: BoxFit.contain,
-        ),
-      ),
-    );
-  }
-
-  void _showNotificationSheet() {
-    final notifications = [
-      {'title': 'Campus Entry Confirmed', 'subtitle': 'Open the student activity view', 'destination': 'students', 'icon': Icons.school},
-      {'title': 'Event Reminder', 'subtitle': 'Open the school events view', 'destination': 'events', 'icon': Icons.event},
-    ];
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF2A120A),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (sheetContext) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Notifications', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            ...notifications.map((item) => ListTile(
-                  leading: Icon(item['icon'] as IconData, color: const Color(0xFFE7B77A)),
-                  title: Text(item['title'] as String, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                  subtitle: Text(item['subtitle'] as String, style: const TextStyle(color: Color(0xFFE8D7C8))),
-                  onTap: () {
-                    setState(() => _selectedSection = item['destination'] as String);
-                    Navigator.pop(sheetContext);
-                  },
-                )),
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _buildStudentSection() {
@@ -639,7 +583,7 @@ class _ParentPageState extends State<ParentPage> {
         children: [
           const Text('Report', style: TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          const Text('Campus attendance summary', style: TextStyle(color: Color(0xFFE8D7C8))),
+          const Text('Campus monitoring summary', style: TextStyle(color: Color(0xFFE8D7C8))),
           const SizedBox(height: 18),
           Row(
             children: [
@@ -672,60 +616,6 @@ class _ParentPageState extends State<ParentPage> {
     );
   }
 
-  Widget _buildNotificationsSection() {
-    final notifications = [
-      {'title': 'Campus Entry Confirmed', 'subtitle': 'Sofia Reyes entered campus via Main Gate', 'time': '07:42 AM', 'destination': 'students'},
-      {'title': 'Event Reminder', 'subtitle': 'Parent-Teacher Conference today at 2:00 PM in AVR', 'time': '07:00 AM', 'destination': 'events'},
-    ];
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Notifications', style: TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          const Text('Campus alerts for your child', style: TextStyle(color: Color(0xFFE8D7C8))),
-          const SizedBox(height: 16),
-          ...notifications.map((n) => InkWell(
-                onTap: () => setState(() => _selectedSection = n['destination'] as String),
-                child: Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3D2017),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFB38157), width: 1.2),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(color: const Color(0xFFE7B77A), borderRadius: BorderRadius.circular(18)),
-                        child: Image.asset('assets/sfhsi.png', width: 20, height: 20, fit: BoxFit.contain),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(n['title'] as String, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 4),
-                            Text(n['subtitle'] as String, style: const TextStyle(color: Color(0xFFE8D7C8))),
-                          ],
-                        ),
-                      ),
-                      Text(n['time'] as String, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                    ],
-                  ),
-                ),
-              )),
-        ],
-      ),
-    );
-  }
-
   Widget _buildSettingsSection() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -734,7 +624,7 @@ class _ParentPageState extends State<ParentPage> {
         children: [
           const Text('Settings', style: TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          const Text('Account preferences and notifications', style: TextStyle(color: Color(0xFFE8D7C8))),
+          const Text('Account preferences', style: TextStyle(color: Color(0xFFE8D7C8))),
           const SizedBox(height: 18),
           Container(
             padding: const EdgeInsets.all(16),
@@ -780,13 +670,23 @@ class _ParentPageState extends State<ParentPage> {
             child: Column(
               children: [
                 SwitchListTile(
-                  value: _adminNotificationsEnabled,
-                  onChanged: (v) async {
-                    setState(() => _adminNotificationsEnabled = v);
-                    await _saveNotificationPreferences();
+                  value: _pushNotificationsEnabled,
+                  onChanged: (enabled) async {
+                    final user = BackendApiService.instance.currentUser;
+                    if (user == null) return;
+                    await PushNotificationService.instance
+                        .setParentNotificationsEnabled(user.id, enabled);
+                    if (!mounted) return;
+                    setState(() => _pushNotificationsEnabled = enabled);
                   },
-                  title: const Text('Push notifications', style: TextStyle(color: Colors.white)),
-                  subtitle: const Text('Receive app updates and activity alerts', style: TextStyle(color: Color(0xFFE8D7C8))),
+                  title: const Text(
+                    'ENTRY/EXIT push notifications',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  subtitle: const Text(
+                    'Receive entry and exit alerts for your linked students',
+                    style: TextStyle(color: Color(0xFFE8D7C8)),
+                  ),
                   activeThumbColor: const Color(0xFFE7B77A),
                 ),
               ],
@@ -807,8 +707,6 @@ class _ParentPageState extends State<ParentPage> {
         return _buildEventsSection();
       case 'reports':
         return _buildReportsSection();
-      case 'notifications':
-        return _buildNotificationsSection();
       case 'settings':
         return _buildSettingsSection();
       default:
@@ -824,7 +722,7 @@ class _ParentPageState extends State<ParentPage> {
         if (didPop) return;
         final shouldLogout = await _confirmLogoutOnBack();
         if (shouldLogout && mounted) {
-          ParentAccountService().logout();
+          await ParentAccountService().logout();
           Navigator.pushReplacementNamed(context, '/welcome');
         }
       },
@@ -842,7 +740,6 @@ class _ParentPageState extends State<ParentPage> {
             ),
           ),
           title: const Text('SFHSI Parent Dashboard', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-          actions: [_buildNotificationActionButton()],
         ),
         body: _buildParentMainBody(),
       ),

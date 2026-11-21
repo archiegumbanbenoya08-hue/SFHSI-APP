@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -7,12 +6,15 @@ from typing import Any, Optional
 
 import bcrypt
 import jwt
-import mysql.connector
+import psycopg
+from psycopg.errors import UniqueViolation
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 load_dotenv(Path(__file__).parent / ".env")
 logging.basicConfig(level=logging.INFO)
@@ -29,7 +31,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=list(origins),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -52,23 +54,25 @@ class PasswordUpdate(BaseModel):
     new_password: str
 
 
-class MessageCreate(BaseModel):
-    receiver_email: str
-    message: str
+class PushDeviceRequest(BaseModel):
+    fcm_installation_id: str = Field(min_length=20, max_length=4096)
 
 
 def get_connection():
-    try:
-        return mysql.connector.connect(
-            host=os.getenv("DB_HOST", "127.0.0.1"),
-            port=int(os.getenv("DB_PORT", "3306")),
-            user=os.getenv("DB_USER", "root"),
-            password=os.getenv("DB_PASSWORD", ""),
-            database=os.getenv("DB_NAME", "scmcies_db"),
-            connection_timeout=5,
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if not database_url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="DATABASE_URL is not configured",
         )
-    except mysql.connector.Error as exc:
-        logger.exception("Could not connect to MySQL")
+    try:
+        return psycopg.connect(
+            database_url,
+            connect_timeout=5,
+            row_factory=dict_row,
+        )
+    except psycopg.Error as exc:
+        logger.exception("Could not connect to PostgreSQL")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database unavailable",
@@ -103,7 +107,7 @@ def record_activity(
                 entity_type,
                 None if entity_id is None else str(entity_id),
                 parent_id,
-                json.dumps(details or {}),
+                Jsonb(details or {}),
             ),
         )
     finally:
@@ -200,7 +204,7 @@ def login(request: LoginRequest):
 
     connection = get_connection()
     try:
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor()
         cursor.execute(
             "SELECT id, email, name, password_hash FROM admin WHERE LOWER(email) = %s LIMIT 1",
             (email,),
@@ -255,7 +259,7 @@ def login(request: LoginRequest):
         return _user_response(account, token)
     except HTTPException:
         raise
-    except mysql.connector.Error as exc:
+    except psycopg.Error as exc:
         connection.rollback()
         logger.exception("Login database operation failed")
         raise HTTPException(status_code=503, detail="Login service unavailable") from exc
@@ -267,7 +271,7 @@ def login(request: LoginRequest):
 def get_profile(user: dict[str, Any] = Depends(get_current_user)):
     connection = get_connection()
     try:
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor()
         table = "admin" if user["role"] == "admin" else "parent"
         cursor.execute(
             f"SELECT id, email, name FROM {table} WHERE id = %s",
@@ -301,7 +305,7 @@ def update_profile(
 
     connection = get_connection()
     try:
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor()
         table = "admin" if user["role"] == "admin" else "parent"
         cursor.execute(f"SELECT id, email, name FROM {table} WHERE id = %s", (user["id"],))
         account = cursor.fetchone()
@@ -347,10 +351,10 @@ def update_profile(
     except HTTPException:
         connection.rollback()
         raise
-    except mysql.connector.IntegrityError as exc:
+    except UniqueViolation as exc:
         connection.rollback()
         raise HTTPException(status_code=409, detail="Email is already in use") from exc
-    except mysql.connector.Error as exc:
+    except psycopg.Error as exc:
         connection.rollback()
         logger.exception("Profile update failed")
         raise HTTPException(status_code=503, detail="Profile update failed") from exc
@@ -368,7 +372,7 @@ def update_password(
 
     connection = get_connection()
     try:
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor()
         table = "admin" if user["role"] == "admin" else "parent"
         cursor.execute(
             f"SELECT password_hash FROM {table} WHERE id = %s",
@@ -410,10 +414,74 @@ def update_password(
     except HTTPException:
         connection.rollback()
         raise
-    except mysql.connector.Error as exc:
+    except psycopg.Error as exc:
         connection.rollback()
         logger.exception("Password update failed")
         raise HTTPException(status_code=503, detail="Password update failed") from exc
+    finally:
+        connection.close()
+
+
+@app.put("/api/push/devices/current")
+def register_push_device(
+    request: PushDeviceRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+):
+    installation_id = request.fcm_installation_id.strip()
+    if len(installation_id) < 20:
+        raise HTTPException(status_code=400, detail="Invalid push installation ID")
+
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO push_device_token (fcm_installation_id, user_role, user_id)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (fcm_installation_id) DO UPDATE
+            SET user_role = EXCLUDED.user_role,
+                user_id = EXCLUDED.user_id,
+                updated_at = now()
+            """,
+            (installation_id, user["role"], user["id"]),
+        )
+        connection.commit()
+        return {"registered": True}
+    except psycopg.Error as exc:
+        connection.rollback()
+        logger.exception("Push device registration failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Push device registration failed",
+        ) from exc
+    finally:
+        connection.close()
+
+
+@app.delete("/api/push/devices/current")
+def unregister_push_device(
+    request: PushDeviceRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+):
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            DELETE FROM push_device_token
+            WHERE fcm_installation_id = %s AND user_role = %s AND user_id = %s
+            """,
+            (request.fcm_installation_id, user["role"], user["id"]),
+        )
+        connection.commit()
+        return {"removed": cursor.rowcount > 0}
+    except psycopg.Error as exc:
+        connection.rollback()
+        logger.exception("Push device removal failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Push device removal failed",
+        ) from exc
     finally:
         connection.close()
 
@@ -423,7 +491,7 @@ def list_parents(user: dict[str, Any] = Depends(get_current_user)):
     require_role(user, "admin")
     connection = get_connection()
     try:
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor()
         cursor.execute("SELECT id, email, name FROM parent ORDER BY name, email")
         return cursor.fetchall()
     finally:
@@ -435,7 +503,7 @@ def list_students(user: dict[str, Any] = Depends(get_current_user)):
     require_role(user, "admin")
     connection = get_connection()
     try:
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor()
         cursor.execute(
             """
             SELECT s.id, s.student_id, s.first_name, s.last_name, s.grade_level,
@@ -474,7 +542,7 @@ def list_children(
         raise HTTPException(status_code=403, detail="Forbidden")
     connection = get_connection()
     try:
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor()
         cursor.execute(
             """
             SELECT id, student_id, first_name, last_name, grade_level, section, image_path
@@ -489,108 +557,6 @@ def list_children(
         connection.close()
 
 
-def _find_account(cursor, role: str, email: str):
-    table = "admin" if role == "admin" else "parent"
-    cursor.execute(
-        f"SELECT id, email, name FROM {table} WHERE LOWER(email) = %s LIMIT 1",
-        (email.strip().lower(),),
-    )
-    return cursor.fetchone()
-
-
-@app.get("/api/messages")
-def get_messages(
-    with_email: str = Query(min_length=3, max_length=255),
-    user: dict[str, Any] = Depends(get_current_user),
-):
-    peer_role = "parent" if user["role"] == "admin" else "admin"
-    connection = get_connection()
-    try:
-        cursor = connection.cursor(dictionary=True)
-        peer = _find_account(cursor, peer_role, with_email)
-        if peer is None:
-            raise HTTPException(status_code=404, detail="Conversation account not found")
-        cursor.execute(
-            """
-            SELECT id, sender_email AS sender, receiver_email AS receiver, message AS text,
-                   created_at AS createdAt, sender_role = 'admin' AS isAdmin
-            FROM app_message
-            WHERE (sender_role = %s AND sender_id = %s AND receiver_role = %s AND receiver_id = %s)
-               OR (sender_role = %s AND sender_id = %s AND receiver_role = %s AND receiver_id = %s)
-            ORDER BY created_at, id
-            LIMIT 500
-            """,
-            (
-                user["role"], user["id"], peer_role, peer["id"],
-                peer_role, peer["id"], user["role"], user["id"],
-            ),
-        )
-        return cursor.fetchall()
-    finally:
-        connection.close()
-
-
-@app.post("/api/messages", status_code=201)
-def send_message(
-    request: MessageCreate,
-    user: dict[str, Any] = Depends(get_current_user),
-):
-    message = request.message.strip()
-    if not message or len(message) > 5000 or len(request.receiver_email) > 255:
-        raise HTTPException(status_code=400, detail="A message of 1–5000 characters is required")
-
-    peer_role = "parent" if user["role"] == "admin" else "admin"
-    connection = get_connection()
-    try:
-        cursor = connection.cursor(dictionary=True)
-        peer = _find_account(cursor, peer_role, request.receiver_email)
-        if peer is None:
-            raise HTTPException(status_code=404, detail="Conversation account not found")
-        cursor.execute(
-            """
-            INSERT INTO app_message
-                (sender_role, sender_id, sender_email, receiver_role, receiver_id,
-                 receiver_email, message)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                user["role"], user["id"], user["email"], peer_role, peer["id"],
-                peer["email"], message,
-            ),
-        )
-        message_id = cursor.lastrowid
-        parent_id = user["id"] if user["role"] == "parent" else peer["id"]
-        record_activity(
-            connection,
-            actor_role=user["role"],
-            actor_id=user["id"],
-            actor_email=user["email"],
-            action="message.sent",
-            entity_type="message",
-            entity_id=message_id,
-            parent_id=parent_id,
-            details={"recipient_role": peer_role},
-        )
-        connection.commit()
-        return {
-            "id": message_id,
-            "sender": user["email"],
-            "receiver": peer["email"],
-            "text": message,
-            "createdAt": datetime.now(timezone.utc),
-            "isAdmin": user["role"] == "admin",
-        }
-    except HTTPException:
-        connection.rollback()
-        raise
-    except mysql.connector.Error as exc:
-        connection.rollback()
-        logger.exception("Message could not be saved")
-        raise HTTPException(status_code=503, detail="Message could not be saved") from exc
-    finally:
-        connection.close()
-
-
 @app.get("/api/activity/admin")
 def admin_activity(
     limit: int = Query(default=100, ge=1, le=MAX_ACTIVITY_LOGS),
@@ -599,7 +565,7 @@ def admin_activity(
     require_role(user, "admin")
     connection = get_connection()
     try:
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor()
         cursor.execute(
             """
             SELECT id, actor_role, actor_id, actor_email, action, entity_type,
@@ -621,7 +587,7 @@ def parent_activity(
     require_role(user, "parent")
     connection = get_connection()
     try:
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor()
         cursor.execute(
             """
             SELECT id, actor_role, actor_id, actor_email, action, entity_type,

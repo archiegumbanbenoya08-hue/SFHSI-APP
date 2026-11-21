@@ -139,6 +139,48 @@ class FastApiAuthTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 403)
 
+    def test_push_device_registration_uses_authenticated_account(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value
+        installation_id = "fcm-installation-id-1234567890"
+
+        with patch.object(main, "get_connection", return_value=connection):
+            response = main.register_push_device(
+                main.PushDeviceRequest(fcm_installation_id=installation_id),
+                user={"id": 17, "email": "parent@example.com", "role": "parent"},
+            )
+
+        self.assertEqual(response, {"registered": True})
+        self.assertIn(
+            "ON CONFLICT (fcm_installation_id) DO UPDATE",
+            cursor.execute.call_args.args[0],
+        )
+        self.assertEqual(
+            cursor.execute.call_args.args[1],
+            (installation_id, "parent", 17),
+        )
+        connection.commit.assert_called_once()
+
+    def test_push_device_removal_is_scoped_to_authenticated_account(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value
+        cursor.rowcount = 0
+
+        with patch.object(main, "get_connection", return_value=connection):
+            response = main.unregister_push_device(
+                main.PushDeviceRequest(
+                    fcm_installation_id="fcm-installation-id-1234567890"
+                ),
+                user={"id": 17, "email": "parent@example.com", "role": "parent"},
+            )
+
+        self.assertEqual(response, {"removed": False})
+        self.assertEqual(
+            cursor.execute.call_args.args[1],
+            ("fcm-installation-id-1234567890", "parent", 17),
+        )
+        connection.commit.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

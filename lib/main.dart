@@ -1,28 +1,27 @@
-﻿import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:flutter/material.dart';
+import 'package:awesome_notifications/awesome_notifications.dart';
 
 import 'pages/welcome_page.dart';
 import 'pages/login_page.dart';
 import 'pages/admin_page.dart';
 import 'pages/parent_page.dart';
-
-void main() {
+import 'services/push_notification_service.dart';
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
   AwesomeNotifications().initialize(
     null,
     [
       NotificationChannel(
-        channelKey: 'basic_channel',
-        channelName: 'Basic Notifications',
-        channelDescription: 'Notification channel for basic tests',
+        channelKey: 'entry_exit_channel',
+        channelName: 'Entry and Exit Alerts',
+        channelDescription: 'Entry and exit notifications for the school',
         defaultColor: Colors.brown,
         importance: NotificationImportance.High,
         channelShowBadge: true,
       ),
     ],
   );
-
+  await PushNotificationService.instance.initialize();
   runApp(const MyApp());
 }
 
@@ -34,17 +33,6 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  @override
-  void initState() {
-    super.initState();
-
-    AwesomeNotifications().isNotificationAllowed().then((isAllowed) {
-      if (!isAllowed) {
-        AwesomeNotifications().requestPermissionToSendNotifications();
-      }
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

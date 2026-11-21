@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
-Database Migration/Conversion Script for SCMCIES
-- Converts between SQLite and MySQL
-- Creates backups
-- Validates data integrity
+Legacy SQLite/MySQL conversion menu. For migration to local Supabase, use
+scripts/migrate_mysql_to_supabase.py instead.
 """
 
 import os

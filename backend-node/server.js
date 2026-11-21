@@ -1,10 +1,11 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { initializePushNotifications } from './services/pushNotifications.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-
 dotenv.config();
+const pushNotificationsConfigured = initializePushNotifications();
 
 const requiredSecrets = ['JWT_ADMIN_SECRET', 'JWT_PARENT_SECRET', 'DEVICE_API_KEY'];
 const missingSecrets = requiredSecrets.filter((name) => !process.env[name]?.trim());
@@ -47,7 +48,11 @@ app.use('/api/admin', adminRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    pushNotifications: pushNotificationsConfigured ? 'configured' : 'not_configured',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // 404 handler

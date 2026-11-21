@@ -10,11 +10,11 @@ router.get('/statistics', authenticateAdminToken, async (req, res) => {
     const conn = await getConnection();
 
     // Total registered students
-    const [totalStudents] = await conn.query('SELECT COUNT(*) as count FROM student');
+    const { rows: totalStudents } = await conn.query('SELECT COUNT(*)::int as count FROM student');
 
     // Students currently on campus
-    const [onCampus] = await conn.query(`
-      SELECT COUNT(DISTINCT student_id) as count FROM entry_exit_log
+    const { rows: onCampus } = await conn.query(`
+      SELECT COUNT(DISTINCT student_id)::int as count FROM entry_exit_log
       WHERE student_id IN (
         SELECT id FROM student
       )
@@ -27,14 +27,14 @@ router.get('/statistics', authenticateAdminToken, async (req, res) => {
     // Today's entries
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const [todayEntries] = await conn.query(
-      'SELECT COUNT(*) as count FROM entry_exit_log WHERE event_type = "ENTRY" AND DATE(timestamp) = DATE(?)',
+    const { rows: todayEntries } = await conn.query(
+      "SELECT COUNT(*)::int as count FROM entry_exit_log WHERE event_type = 'ENTRY' AND DATE(timestamp) = DATE($1)",
       [today]
     );
 
     // Today's exits
-    const [todayExits] = await conn.query(
-      'SELECT COUNT(*) as count FROM entry_exit_log WHERE event_type = "EXIT" AND DATE(timestamp) = DATE(?)',
+    const { rows: todayExits } = await conn.query(
+      "SELECT COUNT(*)::int as count FROM entry_exit_log WHERE event_type = 'EXIT' AND DATE(timestamp) = DATE($1)",
       [today]
     );
 
@@ -56,7 +56,7 @@ router.get('/statistics', authenticateAdminToken, async (req, res) => {
 router.get('/recent-logs', authenticateAdminToken, async (req, res) => {
   try {
     const conn = await getConnection();
-    const [logs] = await conn.query(`
+    const { rows: logs } = await conn.query(`
       SELECT 
         l.id, l.event_type, l.timestamp, l.location,
         s.student_id, s.first_name, s.last_name, s.grade_level, s.image_path,

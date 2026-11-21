@@ -15,6 +15,19 @@ const __dirname = dirname(__filename);
 
 const router = express.Router();
 
+function faceEncodingVector(faceEncoding) {
+  if (!faceEncoding) return null;
+  const values = JSON.parse(faceEncoding);
+  if (
+    !Array.isArray(values)
+    || values.length !== 128
+    || !values.every((value) => typeof value === 'number' && Number.isFinite(value))
+  ) {
+    return null;
+  }
+  return `[${values.join(',')}]`;
+}
+
 const uploadDir = join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -55,7 +68,7 @@ router.get('/', authenticateAdminToken, async (req, res) => {
       ORDER BY s.first_name ASC
     `;
 
-    const [students] = await conn.query(query);
+    const { rows: students } = await conn.query(query);
     conn.release();
 
     const studentsWithStatus = students.map(s => ({
@@ -83,13 +96,13 @@ router.post('/', authenticateAdminToken, upload.single('photo'), async (req, res
     }
 
     conn = await getConnection();
-    await conn.beginTransaction();
+    await conn.query('BEGIN');
     transactionStarted = true;
 
     // Verify parent exists and get email
-    const [parentRows] = await conn.query('SELECT id, email FROM parent WHERE id = ?', [parent_id]);
+    const { rows: parentRows } = await conn.query('SELECT id, email FROM parent WHERE id = $1', [parent_id]);
     if (parentRows.length === 0) {
-      await conn.rollback();
+      await conn.query('ROLLBACK');
       transactionStarted = false;
       return res.status(400).json({ error: 'Invalid parent ID' });
     }
@@ -115,9 +128,24 @@ router.post('/', authenticateAdminToken, upload.single('photo'), async (req, res
     }
 
     // Insert student
-    const [result] = await conn.query(
-      'INSERT INTO student (student_id, first_name, last_name, grade_level, section, parent_id, parent_email, image_path, face_encoding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [student_id, first_name, last_name, grade_level, section, parent_id, parentEmail, imagePath, faceEncoding]
+    const { rows: result } = await conn.query(
+      `INSERT INTO student
+        (student_id, first_name, last_name, grade_level, section, parent_id, parent_email,
+         image_path, face_encoding, face_embedding)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING id`,
+      [
+        student_id,
+        first_name,
+        last_name,
+        grade_level,
+        section,
+        parent_id,
+        parentEmail,
+        imagePath,
+        faceEncoding,
+        faceEncodingVector(faceEncoding),
+      ]
     );
 
     await recordActivity(conn, {
@@ -126,15 +154,15 @@ router.post('/', authenticateAdminToken, upload.single('photo'), async (req, res
       actorEmail: req.user.email,
       action: 'student.created',
       entityType: 'student',
-      entityId: result.insertId,
+      entityId: result[0].id,
       parentId: parentRows[0].id,
       details: { student_id },
     });
-    await conn.commit();
+    await conn.query('COMMIT');
     transactionStarted = false;
 
     res.status(201).json({
-      id: result.insertId,
+      id: result[0].id,
       student_id,
       first_name,
       last_name,
@@ -149,7 +177,7 @@ router.post('/', authenticateAdminToken, upload.single('photo'), async (req, res
   } catch (err) {
     if (conn && transactionStarted) {
       try {
-        await conn.rollback();
+        await conn.query('ROLLBACK');
       } catch (rollbackError) {
         console.error('Failed to roll back student creation:', rollbackError);
       }
@@ -177,15 +205,15 @@ router.put('/:id', authenticateAdminToken, async (req, res) => {
     const { first_name, last_name, grade_level, section } = req.body;
 
     conn = await getConnection();
-    await conn.beginTransaction();
+    await conn.query('BEGIN');
     transactionStarted = true;
 
-    const [students] = await conn.query(
-      'SELECT student_id, parent_id FROM student WHERE id = ?',
+    const { rows: students } = await conn.query(
+      'SELECT student_id, parent_id FROM student WHERE id = $1',
       [studentId],
     );
     if (students.length === 0) {
-      await conn.rollback();
+      await conn.query('ROLLBACK');
       transactionStarted = false;
       return res.status(404).json({ error: 'Student not found' });
     }
@@ -194,30 +222,30 @@ router.put('/:id', authenticateAdminToken, async (req, res) => {
     const updateValues = [];
 
     if (first_name !== undefined) {
-      updateFields.push('first_name = ?');
+      updateFields.push(`first_name = $${updateValues.length + 1}`);
       updateValues.push(first_name);
     }
     if (last_name !== undefined) {
-      updateFields.push('last_name = ?');
+      updateFields.push(`last_name = $${updateValues.length + 1}`);
       updateValues.push(last_name);
     }
     if (grade_level !== undefined) {
-      updateFields.push('grade_level = ?');
+      updateFields.push(`grade_level = $${updateValues.length + 1}`);
       updateValues.push(grade_level);
     }
     if (section !== undefined) {
-      updateFields.push('section = ?');
+      updateFields.push(`section = $${updateValues.length + 1}`);
       updateValues.push(section);
     }
 
     if (updateFields.length === 0) {
-      await conn.rollback();
+      await conn.query('ROLLBACK');
       transactionStarted = false;
       return res.status(400).json({ error: 'No fields to update' });
     }
 
     updateValues.push(studentId);
-    const query = `UPDATE student SET ${updateFields.join(', ')} WHERE id = ?`;
+    const query = `UPDATE student SET ${updateFields.join(', ')} WHERE id = $${updateValues.length}`;
 
     await conn.query(query, updateValues);
     await recordActivity(conn, {
@@ -233,14 +261,14 @@ router.put('/:id', authenticateAdminToken, async (req, res) => {
         changed_fields: updateFields.map((field) => field.split(' ')[0]),
       },
     });
-    await conn.commit();
+    await conn.query('COMMIT');
     transactionStarted = false;
 
     res.json({ message: 'Student updated successfully' });
   } catch (err) {
     if (conn && transactionStarted) {
       try {
-        await conn.rollback();
+        await conn.query('ROLLBACK');
       } catch (rollbackError) {
         console.error('Failed to roll back student update:', rollbackError);
       }
@@ -261,20 +289,20 @@ router.delete('/:id', authenticateAdminToken, async (req, res) => {
     const studentId = req.params.id;
 
     conn = await getConnection();
-    await conn.beginTransaction();
+    await conn.query('BEGIN');
     transactionStarted = true;
-    const [students] = await conn.query(
-      'SELECT student_id, parent_id, image_path FROM student WHERE id = ?',
+    const { rows: students } = await conn.query(
+      'SELECT student_id, parent_id, image_path FROM student WHERE id = $1',
       [studentId],
     );
     if (students.length === 0) {
-      await conn.rollback();
+      await conn.query('ROLLBACK');
       transactionStarted = false;
       return res.status(404).json({ error: 'Student not found' });
     }
 
     imagePath = students[0].image_path;
-    await conn.query('DELETE FROM student WHERE id = ?', [studentId]);
+    await conn.query('DELETE FROM student WHERE id = $1', [studentId]);
     await recordActivity(conn, {
       actorRole: 'admin',
       actorId: req.user.id,
@@ -285,7 +313,7 @@ router.delete('/:id', authenticateAdminToken, async (req, res) => {
       parentId: students[0].parent_id,
       details: { student_id: students[0].student_id },
     });
-    await conn.commit();
+    await conn.query('COMMIT');
     transactionStarted = false;
 
     if (imagePath) {
@@ -303,7 +331,7 @@ router.delete('/:id', authenticateAdminToken, async (req, res) => {
   } catch (err) {
     if (conn && transactionStarted) {
       try {
-        await conn.rollback();
+        await conn.query('ROLLBACK');
       } catch (rollbackError) {
         console.error('Failed to roll back student deletion:', rollbackError);
       }
@@ -319,7 +347,7 @@ router.delete('/:id', authenticateAdminToken, async (req, res) => {
 router.get('/encodings/all', authenticateDevice, async (req, res) => {
   try {
     const conn = await getConnection();
-    const [students] = await conn.query(
+    const { rows: students } = await conn.query(
       'SELECT id, student_id, first_name, last_name, grade_level, section, parent_id, parent_email, face_encoding FROM student WHERE face_encoding IS NOT NULL'
     );
     conn.release();
@@ -344,20 +372,24 @@ router.post('/encoding', authenticateAdminToken, async (req, res) => {
     
     // Parse and validate encoding is valid JSON array
     try {
-      JSON.parse(face_encoding);
+      const parsed = JSON.parse(face_encoding);
+      if (!Array.isArray(parsed)) {
+        conn.release();
+        return res.status(400).json({ error: 'Invalid face encoding format' });
+      }
     } catch {
       conn.release();
       return res.status(400).json({ error: 'Invalid face encoding format' });
     }
 
-    const [result] = await conn.query(
-      'UPDATE student SET face_encoding = ? WHERE student_id = ?',
-      [face_encoding, student_id]
+    const { rowCount } = await conn.query(
+      'UPDATE student SET face_encoding = $1, face_embedding = $2 WHERE student_id = $3',
+      [face_encoding, faceEncodingVector(face_encoding), student_id]
     );
 
     conn.release();
 
-    if (result.affectedRows === 0) {
+    if (rowCount === 0) {
       return res.status(404).json({ error: 'Student not found' });
     }
 

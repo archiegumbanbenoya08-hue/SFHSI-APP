@@ -15,12 +15,12 @@ router.get('/admin', authenticateAdminToken, async (req, res) => {
   let conn;
   try {
     conn = await getConnection();
-    const [logs] = await conn.query(
+    const { rows: logs } = await conn.query(
       `SELECT id, actor_role, actor_id, actor_email, action, entity_type, entity_id,
               parent_id, details, created_at
        FROM activity_log
        ORDER BY created_at DESC, id DESC
-       LIMIT ?`,
+       LIMIT $1`,
       [getLimit(req.query.limit)],
     );
     res.json(logs);
@@ -36,14 +36,14 @@ router.get('/parent', authenticateParentToken, async (req, res) => {
   let conn;
   try {
     conn = await getConnection();
-    const [logs] = await conn.query(
+    const { rows: logs } = await conn.query(
       `SELECT id, actor_role, actor_id, actor_email, action, entity_type, entity_id,
               parent_id, details, created_at
        FROM activity_log
-       WHERE parent_id = ?
-          OR (actor_role = 'parent' AND actor_id = ?)
+       WHERE parent_id = $1
+          OR (actor_role = 'parent' AND actor_id = $2)
        ORDER BY created_at DESC, id DESC
-       LIMIT ?`,
+       LIMIT $3`,
       [req.user.id, req.user.id, getLimit(req.query.limit)],
     );
     res.json(logs);

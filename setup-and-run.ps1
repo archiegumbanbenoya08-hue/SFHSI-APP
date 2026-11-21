@@ -6,19 +6,10 @@ Write-Host "================================================" -ForegroundColor C
 Write-Host ""
 
 Write-Host "[1/5] Setting up database..." -ForegroundColor Green
-Write-Host "Running: mysql with schema file" -ForegroundColor Gray
-
-$mysqlPath = Get-Command mysql -ErrorAction SilentlyContinue
-if ($mysqlPath) {
-    $schemaFile = Join-Path (Get-Location) "backend-node\schema.sql"
-    & cmd /c "mysql -u root < `"$schemaFile`""
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "Database setup completed" -ForegroundColor Green
-    } else {
-        Write-Host "Database may already exist or MySQL needs password" -ForegroundColor Yellow
-    }
-} else {
-    Write-Host "MySQL not found in PATH" -ForegroundColor Yellow
+Write-Host "Starting local Supabase..." -ForegroundColor Gray
+npx --yes supabase start
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not start Supabase. Start Docker Desktop and run this script again."
 }
 
 Write-Host ""
@@ -26,6 +17,7 @@ Write-Host "[2/5] Configuring environment files..." -ForegroundColor Green
 
 $envConfigs = @(
     "backend-node",
+    "backend-fastapi",
     "frontend",
     "mini_pc_client"
 )
@@ -68,16 +60,18 @@ if ($pythonPath) {
 Pop-Location
 
 Write-Host ""
-Write-Host "[4/5] Seeding initial admin account..." -ForegroundColor Green
-
-Push-Location backend-node
-Write-Host "Running: node seed.js" -ForegroundColor Gray
-node seed.js
-$seedExitCode = $LASTEXITCODE
-Pop-Location
-if ($seedExitCode -ne 0) {
-    Write-Host "Configure unique credentials in backend-node\.env before using the application." -ForegroundColor Yellow
+Push-Location backend-fastapi
+Write-Host "Installing FastAPI dependencies..." -ForegroundColor Gray
+python -m pip install -q -r requirements.txt
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    throw "Failed to install FastAPI dependencies."
 }
+Pop-Location
+
+Write-Host ""
+Write-Host "[4/5] Database is ready." -ForegroundColor Green
+Write-Host "If migrating MySQL data, do that before running node seed.js." -ForegroundColor Yellow
 
 Write-Host ""
 Write-Host "[5/5] Starting all services..." -ForegroundColor Green
@@ -90,6 +84,12 @@ $minipcCmd = "cd /d `"$currentDir\mini_pc_client`" && python main.py"
 
 Write-Host "Starting Backend Server..." -ForegroundColor Cyan
 Start-Process cmd -ArgumentList "/k", $backendCmd
+
+Start-Sleep -Seconds 2
+
+$fastApiCmd = "cd /d `"$currentDir\backend-fastapi`" && python -m uvicorn main:app --host 0.0.0.0 --port 8001"
+Write-Host "Starting FastAPI Server..." -ForegroundColor Cyan
+Start-Process cmd -ArgumentList "/k", $fastApiCmd
 
 Start-Sleep -Seconds 2
 
@@ -107,9 +107,12 @@ Write-Host "Setup Complete" -ForegroundColor Green
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Services started:" -ForegroundColor Cyan
+Write-Host "  Supabase Studio: http://localhost:54323" -ForegroundColor White
 Write-Host "  Backend API:    http://localhost:8000" -ForegroundColor White
+Write-Host "  FastAPI:        http://localhost:8001" -ForegroundColor White
 Write-Host "  Frontend:       http://localhost:3000" -ForegroundColor White
 Write-Host "  Mini PC Client: Running" -ForegroundColor White
 Write-Host ""
 Write-Host "Configure unique administrator and parent credentials in backend-node\.env." -ForegroundColor Yellow
+Write-Host "If no data was migrated, run: Push-Location backend-node; node seed.js; Pop-Location" -ForegroundColor Yellow
 Write-Host ""

@@ -116,17 +116,21 @@ class BackendApiService {
   Future<List<Map<String, dynamic>>> getChildren(int parentId) =>
       _getList('/parents/$parentId/children');
 
-  Future<List<Map<String, dynamic>>> getConversation(String email) =>
-      _getList('/messages?with_email=${Uri.encodeQueryComponent(email)}');
+  Future<void> registerPushDevice(String installationId) async {
+    await _request(
+      'PUT',
+      '/push/devices/current',
+      body: {'fcm_installation_id': installationId},
+    );
+  }
 
-  Future<Map<String, dynamic>> sendMessage({
-    required String receiverEmail,
-    required String message,
-  }) => _request(
-    'POST',
-    '/messages',
-    body: {'receiver_email': receiverEmail, 'message': message},
-  );
+  Future<void> unregisterPushDevice(String installationId) async {
+    await _request(
+      'DELETE',
+      '/push/devices/current',
+      body: {'fcm_installation_id': installationId},
+    );
+  }
 
   Future<List<Map<String, dynamic>>> getActivity({int limit = 100}) =>
       _getList('/activity/${_currentUser?.role ?? ''}?limit=$limit');

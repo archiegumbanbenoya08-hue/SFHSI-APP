@@ -1,35 +1,20 @@
 #!/bin/bash
-# Database Setup Script for SCMCIES
+# Start the local Supabase PostgreSQL database for SCMCIES.
 
 echo "=================================================="
 echo "SCMCIES Database Setup"
 echo "=================================================="
 
-# Check if MySQL is running
-echo "Checking MySQL connection..."
-
-# Read environment variables
-DB_HOST=${DB_HOST:-localhost}
-DB_USER=${DB_USER:-root}
-DB_PASSWORD=${DB_PASSWORD:-}
-DB_NAME="scmcies_db"
-
-# Create database and tables
-echo "Creating database and tables..."
-
-if [ -z "$DB_PASSWORD" ]; then
-    mysql -h $DB_HOST -u $DB_USER < backend-node/schema.sql
-else
-    mysql -h $DB_HOST -u $DB_USER -p$DB_PASSWORD < backend-node/schema.sql
+if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker Desktop is required. Install and start it, then retry."
+    exit 1
 fi
 
-if [ $? -eq 0 ]; then
-    echo "✓ Database and tables created successfully"
-else
-    echo "✗ Failed to create database"
+if ! npx --yes supabase start; then
+    echo "✗ Failed to start local Supabase"
     exit 1
 fi
 
 echo "=================================================="
-echo "Database setup complete!"
+echo "Supabase PostgreSQL is running at localhost:54322"
 echo "=================================================="

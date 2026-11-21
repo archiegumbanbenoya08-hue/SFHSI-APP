@@ -35,7 +35,7 @@ Web dashboards update in real-time (30-second refresh)
 - Windows/Linux/Mac with Python 3.8+ for the Mini PC client
 - Python 3.10+ for the FastAPI backend
 - Node.js 14+ and npm
-- MySQL 5.7+ or MySQL 8.0
+- Docker Desktop for local Supabase/PostgreSQL
 - Modern web browser
 
 ### Installation Requirements
@@ -45,36 +45,17 @@ Web dashboards update in real-time (30-second refresh)
 
 ## Quick Start
 
-### 1. Database Setup
+### 1. Local Supabase Database
 
-#### Windows
-```bash
-# Open Command Prompt as Administrator
-cd c:\Users\Admin\Desktop\SCMCIES APP
+Install and launch Docker Desktop, then start the Supabase stack from the
+repository root:
 
-# Start MySQL (assuming XAMPP or local MySQL)
-mysql -u root < backend-node\schema.sql
+```powershell
+npx --yes supabase start
 ```
 
-#### Linux/Mac
-```bash
-mysql -u root -p < backend-node/schema.sql
-# Enter your MySQL password when prompted
-```
-
-For an existing database, apply the activity log migration (the full schema contains indexes that are not intended to be recreated).
-
-Windows Command Prompt:
-
-```cmd
-mysql -u root -p scmcies_db < backend-node\migrations\001_activity_log.sql
-```
-
-Linux/macOS:
-
-```sh
-mysql -u root -p scmcies_db < backend-node/migrations/001_activity_log.sql
-```
+Follow [SUPABASE_LOCAL_SETUP.md](./SUPABASE_LOCAL_SETUP.md) for backend
+configuration and guarded MySQL migration instructions.
 
 ### 2. Backend Setup
 
@@ -95,11 +76,8 @@ cp .env.example .env
 NODE_ENV=development
 PORT=8000
 
-# Database
-DB_HOST=localhost
-DB_USER=root
-DB_PASSWORD=your_mysql_password
-DB_NAME=scmcies_db
+# Local Supabase PostgreSQL connection
+DATABASE_URL=postgresql://postgres:postgres@localhost:54322/postgres?sslmode=disable
 
 # JWT Secrets (generate random strings)
 JWT_ADMIN_SECRET=<unique random secret, at least 32 characters>
@@ -146,7 +124,7 @@ Server should be running at http://localhost:8000
 
 #### Activity Logs
 
-The backend stores non-attendance activity in MySQL's `activity_log` table:
+The backend stores non-attendance activity in PostgreSQL's `activity_log` table:
 
 - Successful and failed administrator and parent sign-ins.
 - Administrator-created student records, updates, and deletions.
@@ -161,25 +139,10 @@ Authenticated API endpoints:
 
 ### 3. FastAPI Setup for Flutter
 
-The Flutter app uses FastAPI for login and database-backed account profiles, student records, messages, and activity. FastAPI shares the MySQL database and JWT secrets with the Node.js backend. It does not write attendance events to `activity_log`.
-
-For an existing database, apply the migrations once, in order. The FastAPI migration `002_flutter_data.sql` adds the admin name column and message table; do not run it if you already applied equivalent schema changes.
-
-Windows Command Prompt:
-
-```cmd
-mysql -u root -p scmcies_db < backend-node\migrations\001_activity_log.sql
-mysql -u root -p scmcies_db < backend-fastapi\migrations\002_flutter_data.sql
-```
-
-Linux/macOS:
-
-```sh
-mysql -u root -p scmcies_db < backend-node/migrations/001_activity_log.sql
-mysql -u root -p scmcies_db < backend-fastapi/migrations/002_flutter_data.sql
-```
-
-For a new database created from `backend-node\schema.sql`, these tables and columns are already present, so migrations are not needed.
+The Flutter app uses FastAPI for login and database-backed account profiles,
+student records, and activity. FastAPI shares the Supabase
+PostgreSQL database and JWT secrets with the Node.js backend. It does not write
+attendance events to `activity_log`.
 
 ```powershell
 cd backend-fastapi
@@ -187,7 +150,9 @@ copy .env.example .env
 python -m pip install -r requirements.txt
 ```
 
-Set `DB_HOST`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` to the same database used by Node.js. Copy the exact `JWT_ADMIN_SECRET` and `JWT_PARENT_SECRET` values from `backend-node\.env`; the services must use matching secrets. Start the API:
+Set `DATABASE_URL` to the same PostgreSQL connection used by Node.js. Copy the
+exact `JWT_ADMIN_SECRET` and `JWT_PARENT_SECRET` values from
+`backend-node\.env`; the services must use matching secrets. Start the API:
 
 ```powershell
 python -m uvicorn main:app --host 0.0.0.0 --port 8001
@@ -549,10 +514,10 @@ SCMCIES APP/
 
 ### Backend Issues
 
-**"Cannot connect to MySQL"**
-- Verify MySQL is running
-- Check DB_HOST, DB_USER, DB_PASSWORD in .env
-- Verify database exists: `mysql -u root` then `SHOW DATABASES;`
+**"Cannot connect to PostgreSQL"**
+- Verify Docker Desktop is running and `npx --yes supabase status` succeeds
+- Check `DATABASE_URL` in the backend `.env` files
+- Confirm the Supabase database is listening on port `54322`
 
 **"Port 8000 already in use"**
 - Change PORT in .env to another port
@@ -601,7 +566,7 @@ Before deploying to production:
    - Use real domain names for URLs
 
 3. **Database**
-   - Use production MySQL database
+   - Use a managed production PostgreSQL database
    - Configure backups
    - Use SSL for connections
 

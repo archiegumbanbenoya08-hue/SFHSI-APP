@@ -1,7 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'backend_api_service.dart';
-
+import 'push_notification_service.dart';
 class ParentAccountService {
   static final ParentAccountService _instance =
       ParentAccountService._internal();
@@ -26,10 +27,22 @@ class ParentAccountService {
       await prefs.remove(key);
     }
     await setLastLoggedInEmail(user.email);
+    try {
+      await PushNotificationService.instance.registerCurrentDevice();
+    } catch (error) {
+      debugPrint('Could not register push notifications: $error');
+    }
     return user;
   }
 
-  void logout() => BackendApiService.instance.logout();
+  Future<void> logout() async {
+    try {
+      await PushNotificationService.instance.unregisterCurrentDevice();
+    } catch (error) {
+      debugPrint('Could not unregister push notifications: $error');
+    }
+    BackendApiService.instance.logout();
+  }
 
   bool validatePassword(String password) {
     final trimmedPassword = password.trim();

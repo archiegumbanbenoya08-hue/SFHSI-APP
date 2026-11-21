@@ -27,11 +27,11 @@ router.get('/:parentId/children', authenticateParentToken, async (req, res) => {
         (SELECT event_type FROM entry_exit_log WHERE student_id = s.id ORDER BY timestamp DESC LIMIT 1) as last_status,
         (SELECT timestamp FROM entry_exit_log WHERE student_id = s.id ORDER BY timestamp DESC LIMIT 1) as last_seen
       FROM student s
-      WHERE s.parent_id = ?
+      WHERE s.parent_id = $1
       ORDER BY s.first_name ASC
     `;
 
-    const [children] = await conn.query(query, [parentId]);
+    const { rows: children } = await conn.query(query, [parentId]);
     conn.release();
 
     const childrenWithStatus = children.map(c => ({

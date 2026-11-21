@@ -11,10 +11,10 @@ export async function recordActivity(
     details = {},
   },
 ) {
-  await conn.execute(
+  await conn.query(
     `INSERT INTO activity_log
       (actor_role, actor_id, actor_email, action, entity_type, entity_id, parent_id, details)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [
       actorRole,
       actorId,

@@ -63,23 +63,9 @@ class FaceRecognitionService {
         // swallow listener errors — pages should guard themselves
       }
     }
-    // in a real app you would also trigger notifications (email/push)
-    // For convenience add a small stub that logs/sends notifications.
-    _sendNotifications(event);
   }
 
   /// Returns read-only history of processed events.
   UnmodifiableListView<FaceEvent> get history => UnmodifiableListView(_history);
 
-  /// Helper (stub) to get parent emails that should be notified for an event.
-  List<String> parentsToNotify(FaceEvent e) => e.parentEmails;
-
-  /// Stub: send notifications to parent emails (prints in debug/runtime).
-  /// Replace this with real push/email integration as needed.
-  Future<void> _sendNotifications(FaceEvent e) async {
-    for (final email in e.parentEmails) {
-      // ignore: avoid_print
-      print('[FaceRecognitionService] Notify $email: ${e.studentName} is ${e.status} at ${e.timestamp.toIso8601String()}');
-    }
-  }
 }

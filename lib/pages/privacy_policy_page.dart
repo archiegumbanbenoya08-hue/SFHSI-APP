@@ -96,14 +96,14 @@ class _PrivacyPolicyPageState extends State<PrivacyPolicyPage> {
                             Text('App Privacy Policy', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                             SizedBox(height: 12),
                             Text(
-                              'SFHSI collects basic account details to keep your child safe and notify you about campus activities. ' 
-                              'We use local storage to store login preferences and message history. '
+                              'SFHSI collects basic account details to keep your child safe and notify you about campus activities. '
+                              'We use local storage to store login preferences. '
                               'Your data is kept on device and shared only with authorized admin and parent accounts in the app.',
                               style: TextStyle(color: Colors.white70, height: 1.5),
                             ),
                             SizedBox(height: 12),
                             Text(
-                              'By tapping Next, you agree to these terms and consent to receive secure push notifications for activity updates.',
+                              'By tapping Next, you agree to these terms and consent to the app using your account and device access.',
                               style: TextStyle(color: Colors.white70, height: 1.5),
                             ),
                           ],

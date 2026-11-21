@@ -1,3 +1,4 @@
+-- LEGACY MYSQL MIGRATION. Supabase schema changes belong in supabase/migrations.
 CREATE TABLE IF NOT EXISTS activity_log (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   actor_role ENUM('admin', 'parent', 'system') NOT NULL,

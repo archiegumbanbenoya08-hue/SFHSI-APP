@@ -6,7 +6,7 @@ test('recordActivity writes structured activity using bound values', async () =>
   let recordedQuery;
   let recordedValues;
   const connection = {
-    async execute(query, values) {
+    async query(query, values) {
       recordedQuery = query;
       recordedValues = values;
     },
@@ -39,7 +39,7 @@ test('recordActivity writes structured activity using bound values', async () =>
 test('recordActivity supports system events without an account or student', async () => {
   let recordedValues;
   const connection = {
-    async execute(_query, values) {
+    async query(_query, values) {
       recordedValues = values;
     },
   };

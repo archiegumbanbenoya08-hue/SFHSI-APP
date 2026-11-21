@@ -1,20 +1,23 @@
-import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
+import pg from 'pg';
 
 dotenv.config();
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'scmcies_db',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+const { Pool } = pg;
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error('DATABASE_URL must be configured for the PostgreSQL backend.');
+}
+
+const pool = new Pool({
+  connectionString,
+  max: 10,
+  connectionTimeoutMillis: 5000,
 });
 
 export async function getConnection() {
-  return await pool.getConnection();
+  return pool.connect();
 }
 
 export default pool;
